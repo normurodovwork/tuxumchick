@@ -1,0 +1,8 @@
+{
+  "name": "Egg Logistics B2B",
+  "description": "B2B egg sales, deliveries and logistics manager with multi-role dashboards and instant local/cloud synchronization",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

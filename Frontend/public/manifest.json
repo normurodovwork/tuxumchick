@@ -1,0 +1,22 @@
+{
+  "short_name": "Tuxum B2B",
+  "name": "B2B Egg Wholesale Sales",
+  "description": "B2B wholesale egg sales tracking system for wholesalers and deliverers",
+  "icons": [
+    {
+      "src": "https://picsum.photos/seed/eggs/192/192",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "https://picsum.photos/seed/eggs/512/512",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#ffffff",
+  "theme_color": "#ea580c",
+  "display": "standalone",
+  "orientation": "portrait"
+}
