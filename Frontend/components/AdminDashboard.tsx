@@ -8,11 +8,12 @@ import {
   Eye, EyeOff, FileSpreadsheet, Archive, Ban, BookOpen, UserPlus, 
   FileText, CheckSquare, Plus, RefreshCw, Building2, History, Edit
 } from "lucide-react";
-import { 
-  loadSettings, saveSettings, loadInventory, saveInventory, 
-  loadShops, saveShop, loadActivityLogs, addActivityLog, 
+import {
+  loadSettings, saveSettings, loadInventory, saveInventory,
+  loadShops, saveShop, loadActivityLogs, addActivityLog,
   loadPriceHistory, addPriceRecord, loadDeliverers, saveDeliverer,
-  updateActivityLog, loadEggTypes, saveEggType
+  updateActivityLog, loadEggTypes, saveEggType,
+  applyComputedDebts, formatSum, hashPassword, ledgerDelta
 } from "../lib/db-service";
 import { translations, Language } from "../lib/translations";
 
@@ -23,7 +24,7 @@ interface AdminDashboardProps {
   setLang: (lang: Language) => void;
 }
 
-type AdminTab = "dashboard" | "deliverers" | "shops" | "operations" | "egg_types" | "audit";
+type AdminTab = "dashboard" | "deliverers" | "shops" | "operations" | "egg_types" | "reports" | "audit";
 
 export default function AdminDashboard({ username, onLogout, lang, setLang }: AdminDashboardProps) {
   const t = translations[lang];
@@ -118,6 +119,23 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
   const [mergeSourceId, setMergeSourceId] = useState("");
   const [mergeTargetId, setMergeTargetId] = useState("");
 
+  // New Sale extra: money received now (partial payment) — ТЗ п.4.4
+  const [saleReceived, setSaleReceived] = useState(0);
+
+  // Adjustment (Корректировка ±) — ТЗ п.3.2/5.1
+  const [isAdjustOpen, setIsAdjustOpen] = useState(false);
+  const [adjustShopId, setAdjustShopId] = useState("");
+  const [adjustAmount, setAdjustAmount] = useState(0);
+  const [adjustSign, setAdjustSign] = useState<"+" | "-">("+");
+  const [adjustReason, setAdjustReason] = useState("");
+
+  // Reports period (ТЗ п.4.9)
+  const [reportStart, setReportStart] = useState("");
+  const [reportEnd, setReportEnd] = useState("");
+
+  // Dashboard period (ТЗ п.4.7)
+  const [dashPeriod, setDashPeriod] = useState<"today" | "week" | "month" | "all">("today");
+
   // Toast
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
 
@@ -142,7 +160,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
 
       setSettings(sett);
       setInventory(inv);
-      setShops(shps);
+      setShops(applyComputedDebts(shps, logs));
       setActivityLogs(logs);
       setPriceHistory(prcs);
       setDeliverers(dels);
@@ -358,53 +376,55 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
       }
 
       const totalSum = totalEggs * itemPrice;
+      const received = Math.max(0, Number(saleReceived) || 0);
+      const debtDelta = totalSum - received;
 
-      // Update inventory (Subtract)
+      // Update inventory (Subtract) — best-effort warehouse tracking
       const newInv = { ...inventory };
       const traysUsed = saleQtyType === "boxes" ? saleQty * traysPerBox : saleQty;
-      if (saleEggType === "c0") newInv.c0 = Math.max(0, (newInv.c0 || 0) - traysUsed);
-      else if (saleEggType === "c1") newInv.c1 = Math.max(0, (newInv.c1 || 0) - traysUsed);
-      else if (saleEggType === "domestic") newInv.domestic = Math.max(0, (newInv.domestic || 0) - traysUsed);
-      else {
-        newInv[saleEggType] = Math.max(0, (newInv[saleEggType] || 0) - traysUsed);
-      }
-
+      newInv[saleEggType] = Math.max(0, (newInv[saleEggType] || 0) - traysUsed);
       await saveInventory(newInv);
       setInventory(newInv);
 
-      // Save Shop Debt
-      const newDebt = salePayment === "debt" ? shop.debt + totalSum : shop.debt;
-      const updatedShop = {
-        ...shop,
-        debt: newDebt,
-        lastPurchaseDate: new Date().toISOString(),
-        ...(salePayment !== "debt" ? { lastPaymentDate: new Date().toISOString() } : {})
-      };
-      await saveShop(updatedShop);
-
-      // Add log
-      const eggTypeName = eggTypeObj 
+      // Debt is derived from operations — no manual mutation of shop.debt.
+      const eggTypeName = eggTypeObj
         ? (lang === "ru" ? eggTypeObj.nameRu : eggTypeObj.nameUz)
         : saleEggType.toUpperCase();
 
-      const logMsg = lang === "ru" 
-        ? `Продажа: ${shop.name} | ${saleQty} ${saleQtyType === "boxes" ? "кор." : "лотк."} ${eggTypeName} | ${salePayment === "debt" ? "В долг" : "Оплачено"}`
-        : `Sotuv: ${shop.name} | ${saleQty} ${saleQtyType === "boxes" ? "quti" : "lagan"} ${eggTypeName} | ${salePayment === "debt" ? "Nasiya" : "To'landi"}`;
+      const logMsg = lang === "ru"
+        ? `Продажа: ${shop.name} | ${saleQty} ${saleQtyType === "boxes" ? "кор." : "лотк."} ${eggTypeName} | Итого ${formatSum(totalSum, "ru")}, получено ${formatSum(received, "ru")}, в долг ${formatSum(debtDelta, "ru")}`
+        : `Sotuv: ${shop.name} | ${saleQty} ${saleQtyType === "boxes" ? "quti" : "lagan"} ${eggTypeName} | Jami ${formatSum(totalSum, "uz")}, qabul ${formatSum(received, "uz")}, nasiya ${formatSum(debtDelta, "uz")}`;
 
       await addActivityLog({
         timestamp: new Date().toISOString(),
+        operationDate: new Date().toISOString(),
         shopId: shop.id,
         shopName: shop.name,
         type: "sale",
         message: logMsg,
+        items: [{
+          eggType: saleEggType,
+          nameRu: eggTypeObj?.nameRu || saleEggType.toUpperCase(),
+          nameUz: eggTypeObj?.nameUz || saleEggType.toUpperCase(),
+          qtyType: saleQtyType,
+          qty: saleQty,
+          trays: traysUsed,
+          pricePerTray: itemPrice * eggsPerTray,
+          lineTotal: totalSum,
+        }],
+        total: totalSum,
+        received,
         amount: totalSum,
+        debtDelta,
         qty: traysUsed,
         eggType: saleEggType,
+        paymentType: received > 0 ? salePayment === "debt" ? "cash" : salePayment : "debt",
         operator: username,
       });
 
       setIsNewSaleOpen(false);
       setSaleQty(0);
+      setSaleReceived(0);
       setSaleShopId("");
       showToast(t.successRecorded, "success");
       reloadData(true);
@@ -420,7 +440,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
       setDelName(deliverer.name || "");
       setDelUsername(deliverer.username || "");
       setDelPhone(deliverer.phone || "");
-      setDelPassword(deliverer.password || "");
+      setDelPassword(""); // blank = keep current password (ТЗ: admin resets passwords)
       setDelStatus(deliverer.status || "online");
     } else {
       setDelName("");
@@ -441,12 +461,20 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
 
     try {
       const id = editingDeliverer ? editingDeliverer.id : "del-" + Date.now();
+      // Store hashed (ТЗ п.7/8). Blank on edit = keep current; new account defaults to "123".
+      let storedPass: string;
+      if (!delPassword.trim() && editingDeliverer) {
+        storedPass = editingDeliverer.password;
+      } else {
+        const rawPass = delPassword.trim() || "123";
+        storedPass = rawPass.startsWith("sha256:") ? rawPass : await hashPassword(rawPass);
+      }
       const payload = {
         id,
         name: delName,
         username: delUsername.toLowerCase().trim(),
         phone: delPhone.trim(),
-        password: delPassword || "123",
+        password: storedPass,
         status: delStatus,
         activePoints: editingDeliverer ? editingDeliverer.activePoints || 0 : 0
       };
@@ -512,7 +540,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
       setShopCardName(shop.name || "");
       setShopCardContact(shop.contact || "");
       setShopCardPhone(shop.phone || "");
-      setShopCardDebt(shop.debt || 0);
+      setShopCardDebt(shop.openingDebt ?? 0);
       setShopCardAddress(shop.address || "");
       setShopCardNote(shop.note || "");
       setShopCardStatus(shop.isArchived ? "archive" : "active");
@@ -543,6 +571,8 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
         name: shopCardName,
         contact: shopCardContact,
         phone: shopCardPhone,
+        // Editable field is the OPENING balance; current debt stays derived (ТЗ п.5.1).
+        openingDebt: Number(shopCardDebt),
         debt: Number(shopCardDebt),
         address: shopCardAddress,
         note: shopCardNote,
@@ -611,23 +641,21 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
         return;
       }
 
-      // 1. Accumulate debt to Target Shop
-      const targetUpdatedDebt = targetShop.debt + sourceShop.debt;
+      // 1. Move only the OPENING balance to target; the operational part moves
+      //    with the reassigned ledger entries (step 3). Prevents double counting.
+      const srcOpening = sourceShop.openingDebt ?? 0;
+      const tgtOpening = targetShop.openingDebt ?? 0;
       const targetPayload = {
         ...targetShop,
-        debt: targetUpdatedDebt,
-        lastPurchaseDate: sourceShop.lastPurchaseDate && (!targetShop.lastPurchaseDate || new Date(sourceShop.lastPurchaseDate) > new Date(targetShop.lastPurchaseDate))
-          ? sourceShop.lastPurchaseDate
-          : targetShop.lastPurchaseDate,
-        lastPaymentDate: sourceShop.lastPaymentDate && (!targetShop.lastPaymentDate || new Date(sourceShop.lastPaymentDate) > new Date(targetShop.lastPaymentDate))
-          ? sourceShop.lastPaymentDate
-          : targetShop.lastPaymentDate
+        openingDebt: tgtOpening + srcOpening,
+        debt: tgtOpening + srcOpening,
       };
       await saveShop(targetPayload);
 
-      // 2. Mark source as Archived and Duplicate merged
+      // 2. Mark source as Archived and Duplicate merged (opening zeroed)
       const sourcePayload = {
         ...sourceShop,
+        openingDebt: 0,
         debt: 0,
         name: `${sourceShop.name} (Дубликат - объединен)`,
         isArchived: true
@@ -665,10 +693,50 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
     }
   };
 
+  // Adjustment (Корректировка долга ±) — first-class operation with a reason.
+  const handleAdjustSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adjustShopId || adjustAmount <= 0 || !adjustReason.trim()) {
+      showToast(lang === "ru" ? "Выберите магазин, укажите сумму и причину" : "Do'kon, summa va sababni ko'rsating", "error");
+      return;
+    }
+    try {
+      const shop = shops.find(s => s.id === adjustShopId);
+      if (!shop) return;
+      const signed = adjustSign === "+" ? Math.abs(adjustAmount) : -Math.abs(adjustAmount);
+      const newDebt = shop.debt + signed;
+
+      await addActivityLog({
+        timestamp: new Date().toISOString(),
+        operationDate: new Date().toISOString(),
+        type: "adjustment",
+        shopId: shop.id,
+        shopName: shop.name,
+        adjustmentAmount: signed,
+        amount: Math.abs(signed),
+        reason: adjustReason.trim(),
+        message: lang === "ru"
+          ? `Корректировка долга: ${shop.name} | ${signed > 0 ? "+" : "−"}${formatSum(Math.abs(signed), "ru")} | Причина: ${adjustReason.trim()} → новый долг ${formatSum(newDebt, "ru")}`
+          : `Qarz tuzatish: ${shop.name} | ${signed > 0 ? "+" : "−"}${formatSum(Math.abs(signed), "uz")} | Sabab: ${adjustReason.trim()} → yangi qarz ${formatSum(newDebt, "uz")}`,
+        operator: username,
+      });
+
+      showToast(lang === "ru" ? "Корректировка применена" : "Tuzatish qo'llanildi");
+      setIsAdjustOpen(false);
+      setAdjustShopId("");
+      setAdjustAmount(0);
+      setAdjustReason("");
+      setAdjustSign("+");
+      reloadData(true);
+    } catch (err) {
+      showToast("Ошибка корректировки", "error");
+    }
+  };
+
   // Operations Overrides (Edit sum / Annul / Cancel)
   const handleOpenEditLog = (log: any) => {
     setEditingLog(log);
-    setEditingLogAmount(log.amount || 0);
+    setEditingLogAmount(log.type === "sale" ? (log.total ?? log.amount ?? 0) : (log.amount || 0));
     setIsEditLogOpen(true);
   };
 
@@ -677,39 +745,20 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
     if (!editingLog || editingLogAmount < 0) return;
 
     try {
-      const oldAmount = editingLog.amount || 0;
-      const diff = editingLogAmount - oldAmount;
+      const oldAmount = editingLog.type === "sale"
+        ? (editingLog.total ?? editingLog.amount ?? 0)
+        : (editingLog.amount || 0);
 
-      // Find shop matching either directly by shopId or parsing message
-      let shop = shops.find(s => s.id === editingLog.shopId);
-      if (!shop && editingLog.message) {
-        shop = shops.find(s => editingLog.message.includes(s.name));
-      }
-
-      if (shop) {
-        let updatedDebt = shop.debt;
-        if (editingLog.type === "payment" && !editingLog.qty) {
-          // If payment decreases: shop's debt increases
-          updatedDebt -= diff;
-        } else if (editingLog.type === "sale" || editingLog.qty) {
-          // If sale increases: shop's debt increases
-          updatedDebt += diff;
-        }
-
-        await saveShop({
-          ...shop,
-          debt: Math.max(0, updatedDebt)
-        });
-      }
-
-      // Update actual log with edit data
-      await updateActivityLog(editingLog.id, {
+      // Debt is derived — only update the ledger entry; it recomputes on reload.
+      const editFields: any = {
         amount: editingLogAmount,
         isEdited: true,
         editedBy: username,
         editedAt: new Date().toISOString(),
-        message: editingLog.message.replace(oldAmount.toLocaleString(), editingLogAmount.toLocaleString())
-      });
+        message: String(editingLog.message).replace(oldAmount.toLocaleString(), editingLogAmount.toLocaleString()),
+      };
+      if (editingLog.type === "sale") editFields.total = editingLogAmount;
+      await updateActivityLog(editingLog.id, editFields);
 
       // Write System Audit Log
       await addActivityLog({
@@ -733,26 +782,14 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
     if (log.isCancelled) return;
 
     try {
-      // Find matching shop
-      let shop = shops.find(s => s.id === log.shopId);
-      if (!shop && log.message) {
-        shop = shops.find(s => log.message.includes(s.name));
-      }
-
-      if (shop) {
-        let updatedDebt = shop.debt;
-        if (log.type === "payment" && !log.qty) {
-          // Annul payment -> debt increases back
-          updatedDebt += log.amount;
-        } else if (log.type === "sale" || log.qty) {
-          // Annul sale -> debt decreases
-          updatedDebt = Math.max(0, updatedDebt - log.amount);
+      // Debt is derived — annulling simply flags the entry; recompute on reload.
+      // Return warehouse stock for sales (best-effort).
+      if (Array.isArray(log.items) && log.items.length > 0 && inventory) {
+        const newInv = { ...inventory };
+        for (const i of log.items) {
+          if (i.eggType) newInv[i.eggType] = (newInv[i.eggType] || 0) + (i.trays || 0);
         }
-
-        await saveShop({
-          ...shop,
-          debt: updatedDebt
-        });
+        await saveInventory(newInv);
       }
 
       // Mark actual log as Cancelled
@@ -776,6 +813,177 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
     } catch (err) {
       showToast("Ошибка аннулирования операции", "error");
     }
+  };
+
+  // ---- Excel export (ТЗ п.4.9) --------------------------------------------
+  // Dependency-free .xls (SpreadsheetML/HTML) — opens natively in Excel,
+  // LibreOffice and Google Sheets, keeps Cyrillic/Uzbek, in the interface lang.
+  const xmlEscape = (v: any) =>
+    String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+  const downloadExcel = (filenameBase: string, title: string, headers: string[], rows: (string | number)[][]) => {
+    const thead = `<tr>${headers.map(h => `<th style="background:#0f172a;color:#fbbf24;border:1px solid #94a3b8;padding:4px;font-weight:bold">${xmlEscape(h)}</th>`).join("")}</tr>`;
+    const tbody = rows.map(r =>
+      `<tr>${r.map(c => `<td style="border:1px solid #cbd5e1;padding:4px">${xmlEscape(c)}</td>`).join("")}</tr>`
+    ).join("");
+    const html =
+      `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">` +
+      `<head><meta charset="UTF-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>` +
+      `<x:Name>${xmlEscape(title).slice(0, 28)}</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>` +
+      `</x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head>` +
+      `<body><table>${thead}${tbody}</table></body></html>`;
+    const blob = new Blob(["﻿" + html], { type: "application/vnd.ms-excel;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${filenameBase}_${new Date().toISOString().split("T")[0]}.xls`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showToast(lang === "ru" ? "Отчёт выгружен в Excel" : "Hisobot Excelга yuklandi");
+  };
+
+  const opsInPeriod = () => {
+    const start = reportStart ? new Date(reportStart + "T00:00:00") : null;
+    const end = reportEnd ? new Date(reportEnd + "T23:59:59") : null;
+    return activityLogs.filter(l => {
+      if (l.type !== "sale" && l.type !== "payment" && l.type !== "adjustment") return false;
+      const when = l.operationDate || l.timestamp;
+      if (!when) return false;
+      const d = new Date(when);
+      if (start && d < start) return false;
+      if (end && d > end) return false;
+      return true;
+    });
+  };
+
+  const opTypeLabel = (l: any) =>
+    l.type === "sale" ? (lang === "ru" ? "Продажа" : "Sotuv")
+      : l.type === "payment" ? (lang === "ru" ? "Оплата" : "To'lov")
+        : (lang === "ru" ? "Корректировка" : "Tuzatish");
+
+  const shopNameById = (id: string) => shops.find(s => s.id === id)?.name || id || "—";
+
+  // 1. Должники
+  const reportDebtors = () => {
+    const threshold = settings?.oldDebtThresholdDays || 10;
+    const rows = shops.filter(s => !s.isArchived && s.debt > 0)
+      .sort((a, b) => b.debt - a.debt)
+      .map(s => {
+        const ref = s.lastPaymentDate || s.lastPurchaseDate;
+        const days = ref ? Math.max(0, Math.floor((Date.now() - new Date(ref).getTime()) / 86400000)) : "—";
+        return [s.name, s.phone || "—", Math.round(s.debt),
+          s.lastPurchaseDate ? new Date(s.lastPurchaseDate).toLocaleDateString() : "—",
+          s.lastPaymentDate ? new Date(s.lastPaymentDate).toLocaleDateString() : "—",
+          days, (typeof days === "number" && days > threshold) ? (lang === "ru" ? "ПРОСРОЧЕН" : "MUDDATI O'TGAN") : ""];
+      });
+    downloadExcel("debtors", lang === "ru" ? "Должники" : "Qarzdorlar",
+      lang === "ru"
+        ? ["Магазин", "Телефон", "Долг (сум)", "Последняя покупка", "Последняя оплата", "Дней без оплаты", "Метка"]
+        : ["Do'kon", "Telefon", "Qarz (so'm)", "Oxirgi xarid", "Oxirgi to'lov", "To'lovsiz kunlar", "Belgi"],
+      rows);
+  };
+
+  // 2. Операции за период
+  const reportOperations = () => {
+    const rows = opsInPeriod()
+      .sort((a, b) => new Date(a.operationDate || a.timestamp).getTime() - new Date(b.operationDate || b.timestamp).getTime())
+      .map(l => {
+        const items = Array.isArray(l.items) ? l.items.map((i: any) => `${i.qty} ${i.qtyType === "boxes" ? (lang === "ru" ? "кор." : "quti") : (lang === "ru" ? "лотк." : "lagan")} ${lang === "ru" ? i.nameRu : i.nameUz}`).join("; ") : "";
+        return [
+          new Date(l.operationDate || l.timestamp).toLocaleString(),
+          opTypeLabel(l),
+          l.operator || "—",
+          l.shopName || shopNameById(l.shopId),
+          items,
+          l.type === "sale" ? Math.round(l.total ?? l.amount ?? 0) : "",
+          l.type === "sale" ? Math.round(l.received ?? 0) : (l.type === "payment" ? Math.round(l.amount || 0) : ""),
+          Math.round(ledgerDelta(l)),
+          l.isCancelled ? (lang === "ru" ? "АННУЛИРОВАНО" : "BEKOR") : "",
+        ];
+      });
+    downloadExcel("operations", lang === "ru" ? "Операции" : "Amaliyotlar",
+      lang === "ru"
+        ? ["Дата/время", "Тип", "Доставщик", "Магазин", "Состав", "Итого", "Получено", "Долг ±", "Статус"]
+        : ["Sana/vaqt", "Turi", "Yetkazuvchi", "Do'kon", "Tarkib", "Jami", "Qabul", "Qarz ±", "Holat"],
+      rows);
+  };
+
+  // 3. По магазину (акт сверки)
+  const reportByShop = (shopId: string) => {
+    const shop = shops.find(s => s.id === shopId);
+    if (!shop) { showToast(lang === "ru" ? "Выберите магазин" : "Do'konni tanlang", "error"); return; }
+    const start = reportStart ? new Date(reportStart + "T00:00:00") : null;
+    const end = reportEnd ? new Date(reportEnd + "T23:59:59") : null;
+    const logs = activityLogs
+      .filter(l => l.shopId === shopId && (l.type === "sale" || l.type === "payment" || l.type === "adjustment"))
+      .sort((a, b) => new Date(a.operationDate || a.timestamp).getTime() - new Date(b.operationDate || b.timestamp).getTime());
+    let opening = shop.openingDebt ?? 0;
+    const inPeriod: any[] = [];
+    for (const l of logs) {
+      const d = new Date(l.operationDate || l.timestamp);
+      if (start && d < start) opening += ledgerDelta(l);
+      else inPeriod.push(l);
+    }
+    let running = opening;
+    const rows: (string | number)[][] = [[lang === "ru" ? "Начальный долг" : "Boshlang'ich qarz", "", "", "", Math.round(opening)]];
+    for (const l of inPeriod) {
+      const d = new Date(l.operationDate || l.timestamp);
+      if (end && d > end) continue;
+      const delta = ledgerDelta(l);
+      running += delta;
+      rows.push([
+        d.toLocaleDateString(), opTypeLabel(l),
+        l.type === "sale" ? Math.round(l.total ?? l.amount ?? 0) : "",
+        l.type !== "sale" ? Math.round(l.type === "payment" ? (l.amount || 0) : Math.abs(delta)) : Math.round(l.received ?? 0),
+        `${Math.round(running)}${l.isCancelled ? " (аннул.)" : ""}`,
+      ]);
+    }
+    rows.push([lang === "ru" ? "Конечный долг" : "Yakuniy qarz", "", "", "", Math.round(running)]);
+    downloadExcel(`shop_${shop.name}`, shop.name,
+      lang === "ru" ? ["Дата", "Операция", "Приход (сум)", "Оплата (сум)", "Долг после"]
+        : ["Sana", "Amaliyot", "Kirim (so'm)", "To'lov (so'm)", "Qarz"],
+      rows);
+  };
+
+  // 4. По доставщику
+  const reportByDeliverer = () => {
+    const rows = deliverers.map(d => {
+      const dl = opsInPeriod().filter(l => !l.isCancelled && (l.operatorUsername === d.username || (l.operator || "").toLowerCase().includes(d.name.toLowerCase())));
+      const sold = dl.filter(l => l.type === "sale").reduce((s, l) => s + (l.total ?? l.amount ?? 0), 0);
+      const collected = dl.reduce((s, l) => s + (l.type === "sale" ? (l.received || 0) : l.type === "payment" ? (l.amount || 0) : 0), 0);
+      const toDebt = dl.filter(l => l.type === "sale").reduce((s, l) => s + ((l.total ?? l.amount ?? 0) - (l.received || 0)), 0);
+      return [d.name, d.username || "—", dl.filter(l => l.type === "sale").length, Math.round(sold), Math.round(collected), Math.round(toDebt)];
+    });
+    downloadExcel("by_deliverer", lang === "ru" ? "По доставщику" : "Yetkazuvchi bo'yicha",
+      lang === "ru" ? ["Доставщик", "Логин", "Продаж", "Продано (сум)", "Собрано (сум)", "В долг (сум)"]
+        : ["Yetkazuvchi", "Login", "Sotuvlar", "Sotildi (so'm)", "Yig'ildi (so'm)", "Nasiya (so'm)"],
+      rows);
+  };
+
+  // 5. Сводка по товарам
+  const reportByProduct = () => {
+    const agg: Record<string, { nameRu: string; nameUz: string; trays: number; sum: number }> = {};
+    opsInPeriod().filter(l => l.type === "sale" && !l.isCancelled).forEach(l => {
+      const items = Array.isArray(l.items) ? l.items : [];
+      items.forEach((i: any) => {
+        const k = i.eggType || "?";
+        if (!agg[k]) agg[k] = { nameRu: i.nameRu || k, nameUz: i.nameUz || k, trays: 0, sum: 0 };
+        agg[k].trays += i.trays || 0;
+        agg[k].sum += i.lineTotal || 0;
+      });
+    });
+    const perBox = settings?.traysPerBox || 12;
+    const perTray = settings?.eggsPerTray || 30;
+    const rows = Object.values(agg).map(a => [
+      lang === "ru" ? a.nameRu : a.nameUz,
+      Math.round(a.trays / perBox), a.trays, a.trays * perTray, Math.round(a.sum),
+    ]);
+    downloadExcel("by_product", lang === "ru" ? "По товарам" : "Tovarlar bo'yicha",
+      lang === "ru" ? ["Вид яиц", "Коробок (≈)", "Лотков", "Штук", "Сумма (сум)"]
+        : ["Tuxum turi", "Quti (≈)", "Lagan", "Dona", "Summa (so'm)"],
+      rows);
   };
 
   // CSV Exporter for Excel Compatibility
@@ -820,40 +1028,88 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
     }
   };
 
+  // Period range for the dashboard (ТЗ п.4.7)
+  const dashRange = useMemo(() => {
+    const now = new Date();
+    const start = new Date();
+    if (dashPeriod === "today") start.setHours(0, 0, 0, 0);
+    else if (dashPeriod === "week") start.setDate(now.getDate() - 7);
+    else if (dashPeriod === "month") start.setMonth(now.getMonth() - 1);
+    else return { start: null as Date | null, end: null as Date | null };
+    return { start, end: now };
+  }, [dashPeriod]);
+
+  const inDashRange = (log: any) => {
+    const when = log.operationDate || log.timestamp;
+    if (!when) return false;
+    if (!dashRange.start) return true;
+    const d = new Date(when);
+    return d >= dashRange.start && d <= (dashRange.end as Date);
+  };
+
   // Compute stats dynamically
   const stats = useMemo(() => {
-    let totalDebtSum = 0;
-    let salesTodaySum = 0;
-    let cashCollectedSum = 0;
+    let totalDebtSum = 0;   // Σ положительных долгов (ТЗ п.4.7)
+    let totalAdvance = 0;   // Σ переплат (авансов)
+    let salesSum = 0;       // продажи за период (итого)
+    let cashCollectedSum = 0; // получено денег: при продажах + приёмы оплаты
+    let givenToDebt = 0;    // отдано в долг за период
 
     shops.forEach(shop => {
-      if (!shop.isArchived) {
-        totalDebtSum += (shop.debt || 0);
-      }
+      if (shop.isArchived) return;
+      if ((shop.debt || 0) > 0) totalDebtSum += shop.debt;
+      else if ((shop.debt || 0) < 0) totalAdvance += -shop.debt;
     });
 
-    const todayStr = new Date().toISOString().split("T")[0];
     activityLogs.forEach(log => {
-      if (log.isCancelled) return; // skip cancelled logs from stats calculations
-
-      const logDate = log.timestamp ? log.timestamp.split("T")[0] : "";
-      if (logDate === todayStr) {
-        if (log.type === "sale") {
-          salesTodaySum += (log.amount || 0);
-        } else if (log.type === "payment") {
-          cashCollectedSum += (log.amount || 0);
-        }
+      if (log.isCancelled || !inDashRange(log)) return;
+      if (log.type === "sale") {
+        salesSum += (log.total ?? log.amount ?? 0);
+        cashCollectedSum += (log.received || 0);
+        givenToDebt += ((log.total ?? log.amount ?? 0) - (log.received || 0));
+      } else if (log.type === "payment") {
+        cashCollectedSum += (log.amount || 0);
+        givenToDebt -= (log.amount || 0);
+      } else if (log.type === "adjustment" && typeof log.adjustmentAmount === "number") {
+        givenToDebt += log.adjustmentAmount;
       }
     });
 
     return {
       totalDebt: totalDebtSum,
-      salesToday: salesTodaySum,
+      totalAdvance,
+      salesToday: salesSum,
       cashCollected: cashCollectedSum,
+      givenToDebt,
       activeDeliverersCount: deliverers.filter(d => d.status === "online").length,
       totalDeliverersCount: deliverers.length,
     };
-  }, [shops, activityLogs, deliverers]);
+  }, [shops, activityLogs, deliverers, dashRange]);
+
+  // Per-deliverer summary for the period (ТЗ п.4.7)
+  const delivererSummary = useMemo(() => {
+    return deliverers.map(d => {
+      const dl = activityLogs.filter(l => !l.isCancelled && inDashRange(l) &&
+        (l.operatorUsername === d.username || (l.operator || "").toLowerCase().includes(d.name.toLowerCase())));
+      const sold = dl.filter(l => l.type === "sale").reduce((s, l) => s + (l.total ?? l.amount ?? 0), 0);
+      const collected = dl.reduce((s, l) => s + (l.type === "sale" ? (l.received || 0) : l.type === "payment" ? (l.amount || 0) : 0), 0);
+      return { id: d.id, name: d.name, status: d.status, sold, collected, count: dl.filter(l => l.type === "sale").length };
+    }).sort((a, b) => b.sold - a.sold);
+  }, [deliverers, activityLogs, dashRange]);
+
+  // Sales breakdown by egg type for the period (ТЗ п.4.7)
+  const eggBreakdown = useMemo(() => {
+    const agg: Record<string, { nameRu: string; nameUz: string; trays: number; sum: number }> = {};
+    activityLogs.filter(l => l.type === "sale" && !l.isCancelled && inDashRange(l)).forEach(l => {
+      (Array.isArray(l.items) ? l.items : []).forEach((i: any) => {
+        const k = i.eggType || "?";
+        if (!agg[k]) agg[k] = { nameRu: i.nameRu || k, nameUz: i.nameUz || k, trays: 0, sum: 0 };
+        agg[k].trays += i.trays || 0;
+        agg[k].sum += i.lineTotal || 0;
+      });
+    });
+    return Object.values(agg).sort((a, b) => b.sum - a.sum);
+  }, [activityLogs, dashRange]);
 
   // Computed and Sorted Debtors
   const processedDebtors = useMemo(() => {
@@ -1013,13 +1269,23 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
             <span>{lang === "ru" ? "Справочник яиц" : "Tuxum turlari"}</span>
           </button>
 
-          <button 
+          <button
+            onClick={() => setActiveTab("reports")}
+            className={`flex items-center px-6 py-3 font-medium text-sm text-left transition-all cursor-pointer ${
+              activeTab === "reports" ? "bg-slate-800 text-amber-400 border-l-4 border-amber-400" : "text-slate-400 hover:bg-slate-800 hover:text-white"
+            }`}
+          >
+            <span className="mr-3 opacity-80 text-base">📊</span>
+            <span>{lang === "ru" ? "Отчёты (Excel)" : "Hisobotlar (Excel)"}</span>
+          </button>
+
+          <button
             onClick={() => setActiveTab("audit")}
             className={`flex items-center px-6 py-3 font-medium text-sm text-left transition-all cursor-pointer ${
               activeTab === "audit" ? "bg-slate-800 text-amber-400 border-l-4 border-amber-400" : "text-slate-400 hover:bg-slate-800 hover:text-white"
             }`}
           >
-            <span className="mr-3 opacity-80 text-base">🛡️</span> 
+            <span className="mr-3 opacity-80 text-base">🛡️</span>
             <span>{lang === "ru" ? "Журнал действий" : "Harakatlar jurnali"}</span>
           </button>
         </nav>
@@ -1062,6 +1328,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                activeTab === "shops" ? (lang === "ru" ? "Справочник торговых точек" : "Do'konlar va mijozlar") :
                activeTab === "operations" ? (lang === "ru" ? "Корректировка и аннулирование операций" : "Amaliyotlarni tahrirlash va bekor qilish") :
                activeTab === "egg_types" ? (lang === "ru" ? "Справочник видов яиц и цен" : "Tuxum turlari va narxlari") :
+               activeTab === "reports" ? (lang === "ru" ? "Отчёты и выгрузка в Excel" : "Hisobotlar va Excel") :
                (lang === "ru" ? "Системный журнал действий" : "Tizim harakatlari jurnali")}
             </h1>
             
@@ -1088,13 +1355,13 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
               </div>
 
               {/* Action Buttons */}
-              <button 
-                onClick={handleDownloadCSV}
+              <button
+                onClick={() => setActiveTab("reports")}
                 className="p-2 bg-slate-100 border border-slate-200 text-slate-700 hover:bg-slate-200 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
-                title="Скачать отчет в Excel (CSV)"
+                title={lang === "ru" ? "Отчёты в Excel" : "Excel hisobotlar"}
               >
                 <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
-                <span className="hidden sm:inline">{lang === "ru" ? "Выгрузка в Excel" : "Excel hisobot"}</span>
+                <span className="hidden sm:inline">{lang === "ru" ? "Отчёты Excel" : "Excel hisobot"}</span>
               </button>
 
               <button 
@@ -1121,29 +1388,44 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
             {/* 1. TAB: DASHBOARD */}
             {activeTab === "dashboard" && (
               <>
+                {/* Period selector (ТЗ п.4.7) */}
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">{lang === "ru" ? "Период:" : "Davr:"}</span>
+                  <div className="flex bg-slate-100 rounded-lg p-1 border border-slate-200">
+                    {([["today", lang === "ru" ? "Сегодня" : "Bugun"], ["week", lang === "ru" ? "Неделя" : "Hafta"], ["month", lang === "ru" ? "Месяц" : "Oy"], ["all", lang === "ru" ? "Всё" : "Hammasi"]] as const).map(([id, label]) => (
+                      <button key={id} onClick={() => setDashPeriod(id)}
+                        className={`px-3 py-1 text-xs font-bold rounded-md transition-all cursor-pointer ${dashPeriod === id ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 {/* Top KPI Stats */}
                 <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 shrink-0">
                   <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between hover:border-slate-300 transition-colors">
                     <div>
                       <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">{t.totalDebt}</p>
                       <p className="text-2xl font-mono font-bold text-red-600">
-                        {stats.totalDebt.toLocaleString()} <span className="text-sm font-medium">{t.sum}</span>
+                        {formatSum(stats.totalDebt, lang)}
                       </p>
                     </div>
                     <p className="text-[10px] text-slate-500 mt-2 flex items-center gap-1">
-                      <span className="text-red-500 font-bold">↑ 4.2%</span> за неделю
+                      {stats.totalAdvance > 0
+                        ? <span>{lang === "ru" ? "Авансы клиентов:" : "Mijoz avanslari:"} <span className="text-emerald-600 font-bold">{formatSum(stats.totalAdvance, lang)}</span></span>
+                        : <span>{lang === "ru" ? "Текущий момент" : "Joriy holat"}</span>}
                     </p>
                   </div>
 
                   <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between hover:border-slate-300 transition-colors">
                     <div>
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">{t.salesToday}</p>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">{lang === "ru" ? "Продажи за период" : "Davr sotuvlari"}</p>
                       <p className="text-2xl font-mono font-bold text-slate-900">
-                        {stats.salesToday.toLocaleString()} <span className="text-sm font-medium">{t.sum}</span>
+                        {formatSum(stats.salesToday, lang)}
                       </p>
                     </div>
-                    <p className="text-[10px] text-green-600 mt-2 font-medium">
-                      Операции за сегодня ({activityLogs.filter(l => l.timestamp?.split("T")[0] === new Date().toISOString().split("T")[0] && !l.isCancelled).length} шт)
+                    <p className="text-[10px] text-slate-500 mt-2 font-medium">
+                      {lang === "ru" ? "Отдано в долг за период:" : "Nasiyaga berilgan:"} <span className="text-red-600 font-bold">{formatSum(stats.givenToDebt, lang)}</span>
                     </p>
                   </div>
 
@@ -1151,11 +1433,11 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                     <div>
                       <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">{t.cashCollected}</p>
                       <p className="text-2xl font-mono font-bold text-slate-900">
-                        {stats.cashCollected.toLocaleString()} <span className="text-sm font-medium">{t.sum}</span>
+                        {formatSum(stats.cashCollected, lang)}
                       </p>
                     </div>
                     <p className="text-[10px] text-slate-500 mt-2">
-                      <span className="text-slate-900 font-bold">71%</span> от плана на сегодня
+                      {lang === "ru" ? "При продажах + приёмы оплаты" : "Sotuv + to'lovlar"}
                     </p>
                   </div>
 
@@ -1348,6 +1630,55 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                     </div>
                   </div>
                 </section>
+
+                {/* Per-deliverer summary + egg-type breakdown (ТЗ п.4.7) */}
+                <section className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+                  <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                    <div className="px-6 py-4 border-b border-slate-100">
+                      <h2 className="font-bold text-slate-700">{lang === "ru" ? "Сводка по доставщикам" : "Yetkazuvchilar bo'yicha"}</h2>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse">
+                        <thead>
+                          <tr className="bg-slate-50 border-b border-slate-100 text-[10px] uppercase tracking-wider text-slate-500">
+                            <th className="px-6 py-3 font-bold">{lang === "ru" ? "Доставщик" : "Yetkazuvchi"}</th>
+                            <th className="px-6 py-3 font-bold text-center">{lang === "ru" ? "Продаж" : "Sotuv"}</th>
+                            <th className="px-6 py-3 font-bold text-right">{lang === "ru" ? "Продано" : "Sotildi"}</th>
+                            <th className="px-6 py-3 font-bold text-right">{lang === "ru" ? "Собрано" : "Yig'ildi"}</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 text-sm">
+                          {delivererSummary.map(d => (
+                            <tr key={d.id} className="hover:bg-slate-50/50">
+                              <td className="px-6 py-3 font-bold text-slate-800">{d.name}</td>
+                              <td className="px-6 py-3 text-center font-mono text-xs">{d.count}</td>
+                              <td className="px-6 py-3 text-right font-mono font-bold text-slate-900">{formatSum(d.sold, lang)}</td>
+                              <td className="px-6 py-3 text-right font-mono font-bold text-emerald-600">{formatSum(d.collected, lang)}</td>
+                            </tr>
+                          ))}
+                          {delivererSummary.every(d => d.count === 0 && d.collected === 0) && (
+                            <tr><td colSpan={4} className="p-6 text-center text-slate-400 text-xs">{lang === "ru" ? "Нет операций за период." : "Davr uchun amaliyot yo'q."}</td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+                    <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">{lang === "ru" ? "Продажи по видам яиц" : "Tuxum turlari bo'yicha"}</h3>
+                    <div className="flex flex-col gap-2.5">
+                      {eggBreakdown.length === 0 && <p className="text-xs text-slate-400">{lang === "ru" ? "Нет данных за период." : "Ma'lumot yo'q."}</p>}
+                      {eggBreakdown.map((e, i) => (
+                        <div key={i} className="flex justify-between items-center text-xs border-b border-slate-50 pb-2 last:border-0">
+                          <span className="font-semibold text-slate-700">{lang === "ru" ? e.nameRu : e.nameUz}</span>
+                          <span className="font-mono text-slate-500">
+                            {e.trays.toLocaleString("ru-RU").replace(/,/g, " ")} {lang === "ru" ? "лотк." : "lagan"} · <span className="font-bold text-slate-800">{formatSum(e.sum, lang)}</span>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </section>
               </>
             )}
 
@@ -1386,7 +1717,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                           <td className="px-6 py-3.5 font-bold text-slate-800">{del.name}</td>
                           <td className="px-6 py-3.5 font-mono text-xs">{del.username || del.name.toLowerCase()}</td>
                           <td className="px-6 py-3.5 font-mono text-xs text-slate-600">{del.phone || "—"}</td>
-                          <td className="px-6 py-3.5 font-mono text-xs text-slate-500">{del.password || "123"}</td>
+                          <td className="px-6 py-3.5 font-mono text-xs text-slate-400">•••••• <span className="text-[9px] uppercase">{lang === "ru" ? "(хеш)" : "(hash)"}</span></td>
                           <td className="px-6 py-3.5 text-center">
                             <span className={`inline-block px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-wider ${
                               del.status === "blocked" 
@@ -1567,6 +1898,13 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                       <h2 className="font-bold text-slate-800 text-base">{lang === "ru" ? "Корректировка и аннулирование операций" : "Amaliyotlarni tahrirlash va bekor qilish"}</h2>
                       <p className="text-xs text-slate-400 mt-0.5">{lang === "ru" ? "Административное исправление сумм и отмена любых транзакций" : "Tranzaksiyalarni tahrirlash va hisobdan chiqarish"}</p>
                     </div>
+                    <button
+                      onClick={() => { setAdjustShopId(""); setAdjustAmount(0); setAdjustSign("+"); setAdjustReason(""); setIsAdjustOpen(true); }}
+                      className="bg-slate-900 hover:bg-slate-800 text-amber-400 text-xs font-bold px-3 py-2 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>{lang === "ru" ? "Корректировка долга ±" : "Qarz tuzatish ±"}</span>
+                    </button>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
@@ -1860,6 +2198,74 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
               </div>
             )}
 
+            {/* TAB: REPORTS / EXCEL EXPORT (ТЗ п.4.9) */}
+            {activeTab === "reports" && (
+              <div className="flex flex-col gap-6">
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 flex flex-col gap-4">
+                  <div>
+                    <h2 className="font-bold text-slate-800 text-base">{lang === "ru" ? "Отчёты в Excel (.xls)" : "Excel hisobotlar (.xls)"}</h2>
+                    <p className="text-xs text-slate-400 mt-0.5">{lang === "ru" ? "Выгрузка на языке интерфейса. Период применяется к отчётам по операциям, доставщикам и товарам." : "Interfeys tilida yuklab olish. Davr amaliyot, yetkazuvchi va tovar hisobotlariga qo'llanadi."}</p>
+                  </div>
+
+                  {/* Period selector */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end bg-slate-50 rounded-lg border border-slate-200 p-4">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{lang === "ru" ? "Период с" : "Davr (dan)"}</label>
+                      <input type="date" value={reportStart} onChange={(e) => setReportStart(e.target.value)} className="px-3 py-2 rounded-lg border border-slate-200 text-xs font-semibold bg-white focus:outline-none focus:border-amber-400" />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{lang === "ru" ? "по" : "gacha"}</label>
+                      <input type="date" value={reportEnd} onChange={(e) => setReportEnd(e.target.value)} className="px-3 py-2 rounded-lg border border-slate-200 text-xs font-semibold bg-white focus:outline-none focus:border-amber-400" />
+                    </div>
+                    {(reportStart || reportEnd) && (
+                      <button onClick={() => { setReportStart(""); setReportEnd(""); }} className="px-3 py-2 rounded-lg border border-slate-200 text-xs font-bold text-slate-500 hover:bg-slate-100 cursor-pointer">
+                        {lang === "ru" ? "Сбросить период" : "Davrni tozalash"}
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <button onClick={reportDebtors} className="flex items-center gap-3 p-4 rounded-xl border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50/40 transition-all text-left cursor-pointer">
+                      <FileSpreadsheet className="w-5 h-5 text-emerald-600 shrink-0" />
+                      <div><p className="text-sm font-bold text-slate-800">{lang === "ru" ? "1. Должники" : "1. Qarzdorlar"}</p><p className="text-[11px] text-slate-400">{lang === "ru" ? "Все магазины с долгом > 0" : "Qarzi > 0 do'konlar"}</p></div>
+                    </button>
+                    <button onClick={reportOperations} className="flex items-center gap-3 p-4 rounded-xl border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50/40 transition-all text-left cursor-pointer">
+                      <FileSpreadsheet className="w-5 h-5 text-emerald-600 shrink-0" />
+                      <div><p className="text-sm font-bold text-slate-800">{lang === "ru" ? "2. Операции за период" : "2. Davr amaliyotlari"}</p><p className="text-[11px] text-slate-400">{lang === "ru" ? "Продажи и оплаты" : "Sotuv va to'lovlar"}</p></div>
+                    </button>
+                    <button onClick={reportByDeliverer} className="flex items-center gap-3 p-4 rounded-xl border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50/40 transition-all text-left cursor-pointer">
+                      <FileSpreadsheet className="w-5 h-5 text-emerald-600 shrink-0" />
+                      <div><p className="text-sm font-bold text-slate-800">{lang === "ru" ? "4. По доставщику" : "4. Yetkazuvchi bo'yicha"}</p><p className="text-[11px] text-slate-400">{lang === "ru" ? "Итоги каждого доставщика" : "Har bir yetkazuvchi yakuni"}</p></div>
+                    </button>
+                    <button onClick={reportByProduct} className="flex items-center gap-3 p-4 rounded-xl border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50/40 transition-all text-left cursor-pointer">
+                      <FileSpreadsheet className="w-5 h-5 text-emerald-600 shrink-0" />
+                      <div><p className="text-sm font-bold text-slate-800">{lang === "ru" ? "5. Сводка по товарам" : "5. Tovarlar bo'yicha"}</p><p className="text-[11px] text-slate-400">{lang === "ru" ? "Лотки / коробки / штуки / сумма" : "Lagan / quti / dona / summa"}</p></div>
+                    </button>
+                  </div>
+
+                  {/* Report 3: by shop */}
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-end gap-3 p-4 rounded-xl border border-slate-200 bg-slate-50">
+                    <div className="flex-1 flex flex-col gap-1">
+                      <label className="text-sm font-bold text-slate-800">{lang === "ru" ? "3. По магазину (акт сверки)" : "3. Do'kon bo'yicha (solishtirma)"}</label>
+                      <select id="reportShopSel" defaultValue="" className="px-3 py-2 rounded-lg border border-slate-200 text-xs font-semibold bg-white focus:outline-none focus:border-amber-400">
+                        <option value="">-- {lang === "ru" ? "Выбрать магазин" : "Do'konni tanlang"} --</option>
+                        {shops.filter(s => !s.isArchived).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+                    </div>
+                    <button
+                      onClick={() => { const el = document.getElementById("reportShopSel") as HTMLSelectElement | null; if (el?.value) reportByShop(el.value); else showToast(lang === "ru" ? "Выберите магазин" : "Do'konni tanlang", "error"); }}
+                      className="px-4 py-2 rounded-lg bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 cursor-pointer flex items-center gap-1.5 justify-center">
+                      <FileSpreadsheet className="w-4 h-4 text-emerald-400" />{lang === "ru" ? "Скачать" : "Yuklab olish"}
+                    </button>
+                  </div>
+
+                  <button onClick={handleDownloadCSV} className="self-start text-xs text-slate-500 underline hover:text-slate-700 cursor-pointer">
+                    {lang === "ru" ? "Дополнительно: полный дамп CSV" : "Qo'shimcha: to'liq CSV dump"}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* 6. TAB: SYSTEM AUDIT ACTION LOGS */}
             {activeTab === "audit" && (
               <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
@@ -1970,6 +2376,60 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
             </div>
           )}
 
+          {/* Modal: Adjustment (Корректировка ±) */}
+          {isAdjustOpen && (
+            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in-50">
+              <div className="bg-white rounded-xl border border-slate-200 shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95">
+                <div className="bg-slate-900 p-5 text-white border-b border-slate-800 flex justify-between items-center">
+                  <div className="flex items-center gap-2">
+                    <Edit2 className="w-5 h-5 text-amber-400" />
+                    <span className="font-bold tracking-tight text-base">{lang === "ru" ? "Корректировка долга" : "Qarzni tuzatish"}</span>
+                  </div>
+                  <button onClick={() => setIsAdjustOpen(false)} className="text-slate-400 hover:text-white transition-colors cursor-pointer"><X className="w-5 h-5" /></button>
+                </div>
+                <form onSubmit={handleAdjustSubmit} className="p-6 flex flex-col gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold uppercase tracking-wider text-slate-400">{t.selectShop}</label>
+                    <select value={adjustShopId} onChange={(e) => setAdjustShopId(e.target.value)} required
+                      className="w-full px-3.5 py-2 rounded-lg border border-slate-200 text-sm font-medium bg-white focus:outline-none focus:border-amber-400">
+                      <option value="">-- {lang === "ru" ? "Выбрать магазин" : "Do'konni tanlang"} --</option>
+                      {shops.filter(s => !s.isArchived).map(s => (
+                        <option key={s.id} value={s.id}>{s.name} ({lang === "ru" ? "долг" : "qarz"}: {formatSum(s.debt, lang)})</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-xs font-bold uppercase tracking-wider text-slate-400">±</label>
+                      <div className="grid grid-cols-2 gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
+                        <button type="button" onClick={() => setAdjustSign("+")} className={`py-1.5 rounded-md text-sm font-bold cursor-pointer ${adjustSign === "+" ? "bg-white text-red-600 shadow-sm" : "text-slate-500"}`}>+</button>
+                        <button type="button" onClick={() => setAdjustSign("-")} className={`py-1.5 rounded-md text-sm font-bold cursor-pointer ${adjustSign === "-" ? "bg-white text-emerald-600 shadow-sm" : "text-slate-500"}`}>−</button>
+                      </div>
+                    </div>
+                    <div className="col-span-2 flex flex-col gap-1.5">
+                      <label className="text-xs font-bold uppercase tracking-wider text-slate-400">{lang === "ru" ? "Сумма (сум)" : "Summa (so'm)"}</label>
+                      <input type="number" min="1" value={adjustAmount || ""} onChange={(e) => setAdjustAmount(Math.max(0, Number(e.target.value)))} required
+                        className="w-full px-3.5 py-2 rounded-lg border border-slate-200 text-sm font-bold font-mono focus:outline-none focus:border-amber-400" />
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-bold uppercase tracking-wider text-slate-400">{lang === "ru" ? "Причина *" : "Sabab *"}</label>
+                    <input type="text" value={adjustReason} onChange={(e) => setAdjustReason(e.target.value)} required
+                      placeholder={lang === "ru" ? "Напр.: возврат брака, сверка" : "Masalan: brak qaytarish"}
+                      className="w-full px-3.5 py-2 rounded-lg border border-slate-200 text-sm font-medium focus:outline-none focus:border-amber-400" />
+                  </div>
+                  <p className="text-[11px] text-slate-500">
+                    {adjustSign === "+" ? (lang === "ru" ? "Увеличит долг магазина." : "Do'kon qarzini oshiradi.") : (lang === "ru" ? "Уменьшит долг магазина." : "Do'kon qarzini kamaytiradi.")}
+                  </p>
+                  <div className="flex gap-3 mt-2">
+                    <button type="button" onClick={() => setIsAdjustOpen(false)} className="flex-1 py-2 rounded-lg border border-slate-200 text-slate-500 font-bold text-xs hover:bg-slate-50 cursor-pointer">{t.cancel}</button>
+                    <button type="submit" className="flex-1 py-2 bg-slate-900 text-white font-bold text-xs hover:bg-slate-800 cursor-pointer flex items-center justify-center gap-1"><Check className="w-4 h-4 text-amber-400" /><span>{t.save}</span></button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
           {/* Modal: New Sale Dialog */}
           {isNewSaleOpen && (
             <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in-50">
@@ -2065,30 +2525,56 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                     </div>
                   </div>
 
-                  {/* Payment Type */}
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-bold uppercase tracking-wider text-slate-400">{t.paymentType}</label>
-                    <div className="grid grid-cols-3 gap-2">
-                      {[
-                        { id: "cash", label: t.cash },
-                        { id: "card", label: t.card },
-                        { id: "debt", label: t.debt }
-                      ].map((item) => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          onClick={() => setSalePayment(item.id as any)}
-                          className={`py-2 rounded-lg border text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
-                            salePayment === item.id 
-                              ? "bg-slate-900 border-slate-800 text-amber-400 shadow-sm" 
-                              : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
-                          }`}
-                        >
-                          {item.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+                  {(() => {
+                    const admEgg = eggTypes.find(e => e.id === saleEggType);
+                    const perTray = admEgg ? admEgg.pricePerTray : (saleEggType === "c0" ? 1500 : saleEggType === "c1" ? 1300 : 1800) * (settings?.eggsPerTray || 30);
+                    const admTrays = saleQtyType === "boxes" ? saleQty * (settings?.traysPerBox || 12) : saleQty;
+                    const admTotal = admTrays * perTray;
+                    const admDelta = admTotal - (Number(saleReceived) || 0);
+                    return (
+                      <>
+                        <div className="flex justify-between items-center bg-slate-900 text-white rounded-lg px-3.5 py-2.5">
+                          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-300">{lang === "ru" ? "Итого к оплате" : "Jami to'lov"}</span>
+                          <span className="font-mono font-extrabold text-amber-400">{formatSum(admTotal, lang)}</span>
+                        </div>
+
+                        {/* Получено денег + метод (ТЗ п.4.4) */}
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-xs font-bold uppercase tracking-wider text-slate-400">{lang === "ru" ? "Получено денег" : "Qabul qilingan pul"}</label>
+                          <input
+                            type="number" min="0"
+                            value={saleReceived || ""}
+                            onChange={(e) => setSaleReceived(Math.max(0, Number(e.target.value)))}
+                            placeholder="0"
+                            className="w-full px-3.5 py-2 rounded-lg border border-slate-200 text-sm font-bold focus:outline-none focus:border-amber-400 font-mono"
+                          />
+                          <div className="grid grid-cols-2 gap-2 mt-1">
+                            <button type="button" onClick={() => setSaleReceived(admTotal)} className="py-1.5 rounded-md border border-slate-200 bg-white text-[10px] font-bold text-slate-700 hover:bg-slate-50 cursor-pointer">{lang === "ru" ? "Оплатил всё" : "Hammasini to'ladi"}</button>
+                            <button type="button" onClick={() => setSaleReceived(0)} className="py-1.5 rounded-md border border-slate-200 bg-white text-[10px] font-bold text-slate-700 hover:bg-slate-50 cursor-pointer">{lang === "ru" ? "Ничего не оплатил" : "To'lamadi"}</button>
+                          </div>
+                        </div>
+
+                        {saleReceived > 0 && (
+                          <div className="flex flex-col gap-1.5">
+                            <label className="text-xs font-bold uppercase tracking-wider text-slate-400">{t.paymentType}</label>
+                            <div className="grid grid-cols-2 gap-2">
+                              {[{ id: "cash", label: t.cash }, { id: "card", label: t.card }].map(m => (
+                                <button key={m.id} type="button" onClick={() => setSalePayment(m.id as any)}
+                                  className={`py-2 rounded-lg border text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer ${salePayment === m.id ? "bg-slate-900 border-slate-800 text-amber-400 shadow-sm" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
+                                  {m.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        <div className={`flex justify-between items-center rounded-lg px-3.5 py-2 border ${admDelta >= 0 ? "bg-red-50 border-red-100" : "bg-emerald-50 border-emerald-100"}`}>
+                          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">{admDelta >= 0 ? (lang === "ru" ? "В долг" : "Nasiya") : (lang === "ru" ? "Аванс" : "Avans")}</span>
+                          <span className={`font-mono font-extrabold ${admDelta >= 0 ? "text-red-600" : "text-emerald-600"}`}>{formatSum(Math.abs(admDelta), lang)}</span>
+                        </div>
+                      </>
+                    );
+                  })()}
 
                   <div className="flex gap-3 mt-4">
                     <button 

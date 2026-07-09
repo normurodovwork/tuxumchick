@@ -6,10 +6,10 @@ import {
   MapPin, Clipboard, Plus, Shield, Check, X, ArrowRight, Loader2,
   Calendar, Clock, Edit2, Trash2, History, User, ListFilter, Building2, BookOpen
 } from "lucide-react";
-import { 
-  loadShops, saveShop, loadSettings, loadInventory, saveInventory, 
+import {
+  loadShops, saveShop, loadSettings, loadInventory, saveInventory,
   loadActivityLogs, addActivityLog, loadPriceHistory, updateActivityLog,
-  loadEggTypes
+  loadEggTypes, applyComputedDebts, formatSum
 } from "../lib/db-service";
 import { translations, Language } from "../lib/translations";
 
@@ -75,12 +75,24 @@ export default function DelivererDashboard({ username, onLogout, lang, setLang }
   // Payment input
   const [collectAmount, setCollectAmount] = useState(0);
   const [collectType, setCollectType] = useState<"cash" | "card">("cash");
+  const [collectComment, setCollectComment] = useState("");
 
-  // Sale input
-  const [saleEggType, setSaleEggType] = useState<string>("c0");
-  const [saleQtyType, setSaleQtyType] = useState<"boxes" | "trays">("boxes");
-  const [saleQty, setSaleQty] = useState(0);
-  const [salePayment, setSalePayment] = useState<"cash" | "card" | "debt">("cash");
+  // Sale input (multi-line items per ТЗ п.4.4)
+  const todayISO = new Date().toISOString().split("T")[0];
+  const [saleItems, setSaleItems] = useState<{ eggType: string; qtyType: "boxes" | "trays"; qty: number }[]>([
+    { eggType: "c0", qtyType: "boxes", qty: 0 },
+  ]);
+  const [saleReceived, setSaleReceived] = useState(0);
+  const [salePayMethod, setSalePayMethod] = useState<"cash" | "card">("cash");
+  const [saleDate, setSaleDate] = useState<string>(todayISO);
+
+  // Confirmation screen after a saved operation (ТЗ п.4.4 шаг 6 / п.6)
+  const [confirmResult, setConfirmResult] = useState<null | {
+    title: string;
+    lines: { label: string; value: string; strong?: boolean }[];
+    newDebt: number;
+    shopName: string;
+  }>(null);
 
   // Toasts
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
@@ -102,11 +114,12 @@ export default function DelivererDashboard({ username, onLogout, lang, setLang }
         loadActivityLogs(),
         loadEggTypes(),
       ]);
-      setShops(shps);
+      const logsData = logs || [];
+      setShops(applyComputedDebts(shps, logsData));
       setSettings(sett);
       setInventory(inv);
       setPriceHistory(prcs);
-      setActivityLogs(logs || []);
+      setActivityLogs(logsData);
       setEggTypes(eggTyps || []);
     } catch (e) {
       showToast("Ошибка при загрузке данных", "error");
@@ -119,6 +132,38 @@ export default function DelivererDashboard({ username, onLogout, lang, setLang }
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Pricing helpers (ТЗ п.4.2/4.4 — price is taken from the catalog automatically)
+  const eggsPerTray = settings?.eggsPerTray || 30;
+  const traysPerBox = settings?.traysPerBox || 12;
+
+  const pricePerTrayFor = (eggTypeId: string): number => {
+    const e = eggTypes.find(x => x.id === eggTypeId);
+    if (e) return e.pricePerTray;
+    // Legacy fallback (per-egg default prices → per tray)
+    const perEgg = eggTypeId === "c0" ? 1500 : eggTypeId === "c1" ? 1300 : 1800;
+    return perEgg * eggsPerTray;
+  };
+
+  const traysForItem = (item: { qtyType: "boxes" | "trays"; qty: number }): number =>
+    item.qtyType === "boxes" ? item.qty * traysPerBox : item.qty;
+
+  const lineTotal = (item: { eggType: string; qtyType: "boxes" | "trays"; qty: number }): number =>
+    traysForItem(item) * pricePerTrayFor(item.eggType);
+
+  const saleTotal = useMemo(
+    () => saleItems.reduce((sum, it) => sum + lineTotal(it), 0),
+    [saleItems, eggTypes, settings]
+  );
+  const saleDebtDelta = saleTotal - saleReceived; // >0 = в долг, <0 = аванс
+
+  const resetSaleForm = () => {
+    setSaleItems([{ eggType: "c0", qtyType: "boxes", qty: 0 }]);
+    setSaleReceived(0);
+    setSalePayMethod("cash");
+    setSaleDate(todayISO);
+    setIsInlineCreateShopOpen(false);
+  };
 
   // Filter shops based on search query
   const filteredShops = useMemo(() => {
@@ -208,20 +253,17 @@ export default function DelivererDashboard({ username, onLogout, lang, setLang }
       const shop = shops.find(s => s.id === selectedShopId);
       if (!shop) return;
 
-      const updatedShop = {
-        ...shop,
-        debt: Math.max(0, shop.debt - collectAmount),
-        lastPaymentDate: new Date().toISOString(),
-      };
+      // Debt is derived from operations — we only append a payment entry.
+      // Overpayment becomes переплата/аванс (negative debt), never lost (ТЗ п.4.5/5.2).
+      const newDebt = shop.debt - collectAmount;
 
-      await saveShop(updatedShop);
-      
       const paymentMsg = lang === "ru"
-        ? `Принята оплата: ${shop.name} | ${collectAmount.toLocaleString()} сум (${collectType === "cash" ? "Наличные" : "Карта"})`
-        : `To'lov qabul qilindi: ${shop.name} | ${collectAmount.toLocaleString()} so'm (${collectType === "cash" ? "Naqd" : "Karta"})`;
+        ? `Приём оплаты: ${shop.name} | ${formatSum(collectAmount, "ru")} (${collectType === "cash" ? "Наличные" : "Карта"})${collectComment ? ` — ${collectComment}` : ""}`
+        : `To'lov qabul qilish: ${shop.name} | ${formatSum(collectAmount, "uz")} (${collectType === "cash" ? "Naqd" : "Karta"})${collectComment ? ` — ${collectComment}` : ""}`;
 
       await addActivityLog({
         timestamp: new Date().toISOString(),
+        operationDate: new Date().toISOString(),
         type: "payment",
         message: paymentMsg,
         amount: collectAmount,
@@ -229,11 +271,21 @@ export default function DelivererDashboard({ username, onLogout, lang, setLang }
         operatorUsername: username,
         shopId: shop.id,
         paymentType: collectType,
+        comment: collectComment || "",
       });
 
-      showToast(t.successRecorded, "success");
       setIsCollectOpen(false);
+      setConfirmResult({
+        title: lang === "ru" ? "Оплата принята" : "To'lov qabul qilindi",
+        shopName: shop.name,
+        newDebt,
+        lines: [
+          { label: lang === "ru" ? "Получено" : "Qabul qilindi", value: formatSum(collectAmount, lang), strong: true },
+          { label: lang === "ru" ? "Способ" : "Usul", value: collectType === "cash" ? t.cash : t.card },
+        ],
+      });
       setCollectAmount(0);
+      setCollectComment("");
       setSelectedShopId("");
       await loadData();
     } catch (err) {
@@ -299,10 +351,11 @@ export default function DelivererDashboard({ username, onLogout, lang, setLang }
     }
   };
 
-  // Handle Sale Submit
+  // Handle Sale Submit (multi-line, partial payment, advance, price snapshot)
   const handleSaleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedShopId || saleQty <= 0) {
+    const validItems = saleItems.filter(it => it.qty > 0);
+    if (!selectedShopId || validItems.length === 0) {
       showToast(t.errorFillAll, "error");
       return;
     }
@@ -311,71 +364,77 @@ export default function DelivererDashboard({ username, onLogout, lang, setLang }
       const shop = shops.find(s => s.id === selectedShopId);
       if (!shop) return;
 
-      const eggsPerTray = settings?.eggsPerTray || 30;
-      const eggTypeObj = eggTypes.find(eg => eg.id === saleEggType);
-      const itemPrice = eggTypeObj 
-        ? (eggTypeObj.pricePerTray / eggsPerTray) 
-        : (saleEggType === "c0" ? 1500 : saleEggType === "c1" ? 1300 : 1800);
+      // Build item snapshots (price fixed at moment of sale — ТЗ п.4.2/5.4)
+      const items = validItems.map(it => {
+        const eggObj = eggTypes.find(eg => eg.id === it.eggType);
+        const trays = traysForItem(it);
+        const pricePerTray = pricePerTrayFor(it.eggType);
+        return {
+          eggType: it.eggType,
+          nameRu: eggObj?.nameRu || it.eggType.toUpperCase(),
+          nameUz: eggObj?.nameUz || it.eggType.toUpperCase(),
+          qtyType: it.qtyType,
+          qty: it.qty,
+          trays,
+          pricePerTray,
+          lineTotal: trays * pricePerTray,
+        };
+      });
 
-      // Calculate quantity in eggs
-      let totalEggs = 0;
-      const traysPerBox = settings?.traysPerBox || 12;
+      const total = items.reduce((s, i) => s + i.lineTotal, 0);
+      const received = Math.max(0, Number(saleReceived) || 0);
+      const debtDelta = total - received;
+      const newDebt = shop.debt + debtDelta;
 
-      if (saleQtyType === "boxes") {
-        totalEggs = saleQty * traysPerBox * eggsPerTray;
-      } else {
-        totalEggs = saleQty * eggsPerTray;
+      // Update warehouse stock per item (best-effort, not a ТЗ requirement)
+      const newInv = { ...(inventory || {}) };
+      for (const i of items) {
+        newInv[i.eggType] = Math.max(0, (newInv[i.eggType] || 0) - i.trays);
       }
-
-      const totalSum = totalEggs * itemPrice;
-
-      // Update inventory (Subtract)
-      const newInv = { ...inventory };
-      const traysUsed = saleQtyType === "boxes" ? saleQty * traysPerBox : saleQty;
-      if (saleEggType === "c0") newInv.c0 = Math.max(0, (newInv.c0 || 0) - traysUsed);
-      else if (saleEggType === "c1") newInv.c1 = Math.max(0, (newInv.c1 || 0) - traysUsed);
-      else if (saleEggType === "domestic") newInv.domestic = Math.max(0, (newInv.domestic || 0) - traysUsed);
-      else {
-        newInv[saleEggType] = Math.max(0, (newInv[saleEggType] || 0) - traysUsed);
-      }
-
       await saveInventory(newInv);
 
-      // If debt, add to debt. Otherwise update shop last dates
-      const updatedShop = {
-        ...shop,
-        debt: salePayment === "debt" ? shop.debt + totalSum : shop.debt,
-        lastPurchaseDate: new Date().toISOString(),
-        lastPaymentDate: salePayment !== "debt" ? new Date().toISOString() : shop.lastPaymentDate,
-      };
-      await saveShop(updatedShop);
-
-      const eggTypeName = eggTypeObj 
-        ? (lang === "ru" ? eggTypeObj.nameRu : eggTypeObj.nameUz)
-        : saleEggType.toUpperCase();
+      const itemsSummary = items
+        .map(i => `${i.qty} ${i.qtyType === "boxes" ? (lang === "ru" ? "кор." : "quti") : (lang === "ru" ? "лотк." : "lagan")} ${lang === "ru" ? i.nameRu : i.nameUz}`)
+        .join(", ");
 
       const logMsg = lang === "ru"
-        ? `Продажа на точке: ${shop.name} | ${saleQty} ${saleQtyType === "boxes" ? "кор." : "лотк."} ${eggTypeName} | ${salePayment === "debt" ? "В долг" : "Оплачено сразу"}`
-        : `Nuqtada sotuv: ${shop.name} | ${saleQty} ${saleQtyType === "boxes" ? "quti" : "lagan"} ${eggTypeName} | ${salePayment === "debt" ? "Nasiya" : "Sotildi"}`;
+        ? `Продажа: ${shop.name} | ${itemsSummary} | Итого ${formatSum(total, "ru")}, получено ${formatSum(received, "ru")}, в долг ${formatSum(debtDelta, "ru")}`
+        : `Sotuv: ${shop.name} | ${itemsSummary} | Jami ${formatSum(total, "uz")}, qabul ${formatSum(received, "uz")}, nasiya ${formatSum(debtDelta, "uz")}`;
+
+      const operationDate = saleDate ? new Date(saleDate + "T12:00:00").toISOString() : new Date().toISOString();
 
       await addActivityLog({
         timestamp: new Date().toISOString(),
-        type: salePayment === "debt" ? "sale" : "payment",
+        operationDate,
+        type: "sale",
         message: logMsg,
-        amount: totalSum,
+        items,
+        total,
+        received,
+        amount: total,
+        debtDelta,
+        paymentType: received > 0 ? salePayMethod : "debt",
         operator: `${username} (доставщик)`,
         operatorUsername: username,
         shopId: shop.id,
-        eggType: saleEggType,
-        qty: saleQty,
-        qtyType: saleQtyType,
-        paymentType: salePayment,
-        traysUsed: traysUsed,
+        manualDate: saleDate !== todayISO,
       });
 
-      showToast(t.successRecorded, "success");
       setIsSaleOpen(false);
-      setSaleQty(0);
+      setConfirmResult({
+        title: lang === "ru" ? "Продажа сохранена" : "Sotuv saqlandi",
+        shopName: shop.name,
+        newDebt,
+        lines: [
+          { label: lang === "ru" ? "Итого к оплате" : "Jami to'lov", value: formatSum(total, lang), strong: true },
+          { label: lang === "ru" ? "Получено" : "Qabul qilindi", value: formatSum(received, lang) },
+          {
+            label: debtDelta >= 0 ? (lang === "ru" ? "В долг" : "Nasiya") : (lang === "ru" ? "Аванс" : "Avans"),
+            value: formatSum(Math.abs(debtDelta), lang),
+          },
+        ],
+      });
+      resetSaleForm();
       setSelectedShopId("");
       await loadData();
     } catch (err) {
@@ -398,36 +457,20 @@ export default function DelivererDashboard({ username, onLogout, lang, setLang }
 
     try {
       const shop = shops.find(s => s.id === log.shopId);
-      if (!shop) {
-        showToast(lang === "ru" ? "Магазин не найден" : "Do'kon topilmadi", "error");
-        return;
-      }
 
-      // Revert debt effect
-      let newDebt = shop.debt;
-      if (log.type === "payment") {
-        newDebt = shop.debt + log.amount;
-      } else {
-        if (log.paymentType === "debt") {
-          newDebt = Math.max(0, shop.debt - log.amount);
+      // Debt is derived — cancelling a ledger entry automatically removes its
+      // effect on reload; we only need to return stock and flag the entry.
+      if (Array.isArray(log.items) && log.items.length > 0) {
+        const newInv = { ...(inventory || {}) };
+        for (const i of log.items) {
+          if (i.eggType) newInv[i.eggType] = (newInv[i.eggType] || 0) + (i.trays || 0);
         }
+        await saveInventory(newInv);
+      } else if (log.traysUsed && log.eggType) {
+        const newInv = { ...(inventory || {}) };
+        newInv[log.eggType] = (newInv[log.eggType] || 0) + log.traysUsed;
+        await saveInventory(newInv);
       }
-
-      // Revert egg inventory if it was a sale
-      if (log.traysUsed && log.eggType) {
-        const newInv = { ...inventory };
-        const eggKey = log.eggType as "c0" | "c1" | "domestic";
-        if (newInv && newInv[eggKey] !== undefined) {
-          newInv[eggKey] = (newInv[eggKey] || 0) + log.traysUsed;
-          await saveInventory(newInv);
-        }
-      }
-
-      // Save updated shop
-      await saveShop({
-        ...shop,
-        debt: newDebt
-      });
 
       // Update log
       await updateActivityLog(log.id, {
@@ -437,17 +480,17 @@ export default function DelivererDashboard({ username, onLogout, lang, setLang }
           : `[BEKOR QILINGAN] ${log.message}`
       });
 
-      // Write audit journal
+      // Write audit journal (type "audit" — does not affect derived debt)
       await addActivityLog({
         timestamp: new Date().toISOString(),
-        type: "payment",
+        type: "audit",
         message: lang === "ru"
           ? `Доставщик ${username} отменил операцию #${log.id}: ${log.message}`
           : `Yetkazib beruvchi ${username} #${log.id} amaliyotni bekor qildi: ${log.message}`,
-        amount: log.amount,
+        amount: 0,
         operator: `${username} (доставщик)`,
         operatorUsername: username,
-        shopId: shop.id
+        shopId: shop?.id || log.shopId,
       });
 
       showToast(
@@ -478,52 +521,38 @@ export default function DelivererDashboard({ username, onLogout, lang, setLang }
 
     try {
       const shop = shops.find(s => s.id === editingLog.shopId);
-      if (!shop) {
-        showToast(lang === "ru" ? "Магазин не найден" : "Do'kon topilmadi", "error");
-        return;
-      }
+      const oldAmount = editingLog.type === "sale"
+        ? (editingLog.total ?? editingLog.amount ?? 0)
+        : (editingLog.amount ?? 0);
 
-      const difference = editingLogAmount - editingLog.amount;
-      let newDebt = shop.debt;
-
-      if (editingLog.type === "payment") {
-        newDebt = Math.max(0, shop.debt - difference);
-      } else {
-        if (editingLog.paymentType === "debt") {
-          newDebt = Math.max(0, shop.debt + difference);
-        }
-      }
-
-      // Update shop debt
-      await saveShop({
-        ...shop,
-        debt: newDebt
-      });
-
-      // Update activity log message and amount
-      const cleanMsg = editingLog.message.replace(/ \| \d[\d\s,]* сум/g, "").replace(/ \| \d[\d\s,]* so'm/g, "");
-      const updatedMsg = lang === "ru"
-        ? `${cleanMsg} | ${editingLogAmount.toLocaleString()} сум (Изменено)`
-        : `${cleanMsg} | ${editingLogAmount.toLocaleString()} so'm (O'zgartirildi)`;
-
-      await updateActivityLog(editingLog.id, {
+      // Debt is derived — we just update the ledger entry; recompute on reload.
+      const updateFields: any = {
         amount: editingLogAmount,
-        message: updatedMsg,
         isEdited: true,
-        originalAmount: editingLog.amount
-      });
+        originalAmount: oldAmount,
+      };
+      if (editingLog.type === "sale") {
+        // New total; received is preserved, debt portion recomputes automatically.
+        updateFields.total = editingLogAmount;
+      }
+      const cleanMsg = String(editingLog.message).replace(/ \| \d[\d\s,]* сум/g, "").replace(/ \| \d[\d\s,]* so'm/g, "");
+      updateFields.message = lang === "ru"
+        ? `${cleanMsg} | ${formatSum(editingLogAmount, "ru")} (Изменено)`
+        : `${cleanMsg} | ${formatSum(editingLogAmount, "uz")} (O'zgartirildi)`;
 
-      // Log the edit activity
+      await updateActivityLog(editingLog.id, updateFields);
+
+      // Audit trail (type "audit" — does not affect derived debt)
       await addActivityLog({
         timestamp: new Date().toISOString(),
-        type: "payment",
+        type: "audit",
         message: lang === "ru"
-          ? `Доставщик ${username} изменил сумму операции #${editingLog.id} с ${editingLog.amount.toLocaleString()} на ${editingLogAmount.toLocaleString()} сум`
-          : `Yetkazib beruvchi ${username} #${editingLog.id} amaliyot summasini ${editingLog.amount.toLocaleString()} dan ${editingLogAmount.toLocaleString()} so'mga o'zgartirdi`,
-        amount: editingLogAmount,
+          ? `Доставщик ${username} изменил сумму операции #${editingLog.id} с ${formatSum(oldAmount, "ru")} на ${formatSum(editingLogAmount, "ru")}`
+          : `Yetkazib beruvchi ${username} #${editingLog.id} summasini ${formatSum(oldAmount, "uz")} dan ${formatSum(editingLogAmount, "uz")} ga o'zgartirdi`,
+        amount: 0,
         operator: `${username} (доставщик)`,
         operatorUsername: username,
-        shopId: shop.id
+        shopId: shop?.id || editingLog.shopId,
       });
 
       showToast(
@@ -573,6 +602,42 @@ export default function DelivererDashboard({ username, onLogout, lang, setLang }
         }`}>
           <CheckCircle2 className="w-4 h-4" />
           <span className="font-medium">{toast.message}</span>
+        </div>
+      )}
+
+      {/* Confirmation screen after a saved operation (ТЗ п.4.4 шаг 6 / п.6) */}
+      {confirmResult && (
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4 animate-in fade-in-50">
+          <div className="bg-white w-full max-w-sm rounded-2xl border border-slate-200 overflow-hidden shadow-2xl animate-in zoom-in-95">
+            <div className="bg-emerald-600 p-5 text-white flex flex-col items-center gap-2">
+              <CheckCircle2 className="w-10 h-10" />
+              <span className="font-bold text-base">{confirmResult.title}</span>
+              <span className="text-emerald-50 text-xs font-medium">{confirmResult.shopName}</span>
+            </div>
+            <div className="p-5 flex flex-col gap-2.5">
+              {confirmResult.lines.map((l, i) => (
+                <div key={i} className="flex justify-between items-center text-sm">
+                  <span className="text-slate-500">{l.label}</span>
+                  <span className={`font-mono ${l.strong ? "font-extrabold text-slate-900" : "font-semibold text-slate-700"}`}>{l.value}</span>
+                </div>
+              ))}
+              <div className={`mt-1 flex justify-between items-center rounded-lg px-3.5 py-3 border ${confirmResult.newDebt > 0 ? "bg-red-50 border-red-100" : "bg-emerald-50 border-emerald-100"}`}>
+                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                  {confirmResult.newDebt >= 0 ? (lang === "ru" ? "Новый долг магазина" : "Do'konning yangi qarzi") : (lang === "ru" ? "Аванс магазина" : "Do'kon avansi")}
+                </span>
+                <span className={`font-mono font-extrabold text-lg ${confirmResult.newDebt > 0 ? "text-red-600" : "text-emerald-600"}`}>
+                  {formatSum(Math.abs(confirmResult.newDebt), lang)}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setConfirmResult(null)}
+                className="mt-2 w-full py-2.5 bg-slate-900 text-white font-bold text-sm rounded-xl hover:bg-slate-800 transition-colors cursor-pointer"
+              >
+                {lang === "ru" ? "Готово" : "Tayyor"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1024,15 +1089,45 @@ export default function DelivererDashboard({ username, onLogout, lang, setLang }
                     </div>
                   </div>
 
+                  {/* Comment (optional — ТЗ п.4.5) */}
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      {lang === "ru" ? "Комментарий (необязательно)" : "Izoh (ixtiyoriy)"}
+                    </label>
+                    <input
+                      type="text"
+                      value={collectComment}
+                      onChange={(e) => setCollectComment(e.target.value)}
+                      placeholder={lang === "ru" ? "Напр.: частичная оплата" : "Masalan: qisman to'lov"}
+                      className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-medium focus:outline-none focus:border-amber-400"
+                    />
+                  </div>
+
+                  {selectedShopId && (() => {
+                    const sh = shops.find(s => s.id === selectedShopId);
+                    if (!sh) return null;
+                    const remaining = sh.debt - collectAmount;
+                    return (
+                      <div className={`flex justify-between items-center rounded-lg px-3.5 py-2 border ${remaining >= 0 ? "bg-slate-50 border-slate-150" : "bg-emerald-50 border-emerald-100"}`}>
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                          {remaining >= 0 ? (lang === "ru" ? "Остаток долга" : "Qolgan qarz") : (lang === "ru" ? "Аванс" : "Avans")}
+                        </span>
+                        <span className={`font-mono font-extrabold ${remaining > 0 ? "text-red-600" : "text-emerald-600"}`}>
+                          {formatSum(Math.abs(remaining), lang)}
+                        </span>
+                      </div>
+                    );
+                  })()}
+
                   <div className="flex gap-3 mt-4">
-                    <button 
+                    <button
                       type="button"
-                      onClick={() => setIsCollectOpen(false)} 
+                      onClick={() => setIsCollectOpen(false)}
                       className="flex-1 py-2 rounded-lg border border-slate-200 text-slate-500 font-bold text-xs hover:bg-slate-50 transition-all cursor-pointer"
                     >
                       {t.cancel}
                     </button>
-                    <button 
+                    <button
                       type="submit"
                       className="flex-1 py-2 bg-slate-900 text-white font-bold text-xs hover:bg-slate-800 transition-all cursor-pointer flex items-center justify-center gap-1"
                     >
@@ -1177,93 +1272,149 @@ export default function DelivererDashboard({ username, onLogout, lang, setLang }
                     )}
                   </div>
 
-                  {/* Egg Type */}
+                  {/* Sale date (ТЗ п.5.6 — дату можно указать вручную) */}
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{t.eggType}</label>
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-1.5">
-                      {(eggTypes.length > 0 ? eggTypes.filter(e => e.status === "active") : [
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      {lang === "ru" ? "Дата продажи" : "Sotuv sanasi"}
+                    </label>
+                    <input
+                      type="date"
+                      value={saleDate}
+                      max={todayISO}
+                      onChange={(e) => setSaleDate(e.target.value)}
+                      className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold focus:outline-none focus:border-amber-400 font-mono"
+                    />
+                  </div>
+
+                  {/* Товарные позиции (одна или несколько строк — ТЗ п.4.4) */}
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                        {lang === "ru" ? "Товарные позиции" : "Tovar pozitsiyalari"}
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setSaleItems(prev => [...prev, { eggType: (eggTypes.filter(e => e.status === "active")[0]?.id) || "c0", qtyType: "boxes", qty: 0 }])}
+                        className="text-[10px] text-amber-500 hover:text-amber-600 font-bold flex items-center gap-0.5 cursor-pointer"
+                      >
+                        <Plus className="w-3 h-3" /> {lang === "ru" ? "Позиция" : "Pozitsiya"}
+                      </button>
+                    </div>
+
+                    {saleItems.map((item, idx) => {
+                      const activeEggs = eggTypes.length > 0 ? eggTypes.filter(e => e.status === "active") : [
                         { id: "c0", nameRu: "C0", nameUz: "C0" },
                         { id: "c1", nameRu: "C1", nameUz: "C1" },
-                        { id: "domestic", nameRu: "Домашние", nameUz: "Uy" }
-                      ]).map((egg) => (
-                        <button
-                          key={egg.id}
-                          type="button"
-                          onClick={() => setSaleEggType(egg.id)}
-                          className={`py-1.5 px-0.5 rounded-md border text-[9px] font-bold uppercase tracking-wider transition-all cursor-pointer truncate ${
-                            saleEggType === egg.id 
-                              ? "bg-slate-900 border-slate-800 text-amber-400" 
-                              : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
-                          }`}
-                          title={lang === "ru" ? egg.nameRu : egg.nameUz}
-                        >
-                          {lang === "ru" ? egg.nameRu : egg.nameUz}
-                        </button>
-                      ))}
+                        { id: "domestic", nameRu: "Домашние", nameUz: "Uy" },
+                      ];
+                      const setItem = (patch: Partial<typeof item>) =>
+                        setSaleItems(prev => prev.map((it, i) => i === idx ? { ...it, ...patch } : it));
+                      const trays = traysForItem(item);
+                      const lt = lineTotal(item);
+                      return (
+                        <div key={idx} className="bg-slate-50 border border-slate-200 rounded-lg p-2.5 flex flex-col gap-2">
+                          <div className="flex items-center gap-2">
+                            <select
+                              value={item.eggType}
+                              onChange={(e) => setItem({ eggType: e.target.value })}
+                              className="flex-1 px-2 py-1.5 rounded border border-slate-200 text-xs font-semibold bg-white focus:outline-none focus:border-amber-400"
+                            >
+                              {activeEggs.map(egg => (
+                                <option key={egg.id} value={egg.id}>{lang === "ru" ? egg.nameRu : egg.nameUz}</option>
+                              ))}
+                            </select>
+                            {saleItems.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => setSaleItems(prev => prev.filter((_, i) => i !== idx))}
+                                className="p-1.5 bg-white border border-slate-200 rounded text-red-500 hover:bg-red-50 cursor-pointer"
+                                title={lang === "ru" ? "Удалить позицию" : "Pozitsiyani o'chirish"}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="grid grid-cols-2 gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
+                              <button type="button" onClick={() => setItem({ qtyType: "boxes" })}
+                                className={`py-1 rounded-md text-[9px] font-bold transition-all cursor-pointer ${item.qtyType === "boxes" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>
+                                {lang === "ru" ? "Коробки" : "Qutilar"}
+                              </button>
+                              <button type="button" onClick={() => setItem({ qtyType: "trays" })}
+                                className={`py-1 rounded-md text-[9px] font-bold transition-all cursor-pointer ${item.qtyType === "trays" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>
+                                {lang === "ru" ? "Лотки" : "Laganlar"}
+                              </button>
+                            </div>
+                            <input
+                              type="number" min="0" inputMode="numeric"
+                              value={item.qty || ""}
+                              onChange={(e) => setItem({ qty: Math.max(0, Number(e.target.value)) })}
+                              placeholder={lang === "ru" ? "Кол-во" : "Soni"}
+                              className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold focus:outline-none focus:border-amber-400 font-mono"
+                            />
+                          </div>
+                          <div className="flex justify-between text-[10px] text-slate-500 font-mono">
+                            <span>{trays} {lang === "ru" ? "лотк." : "lagan"} · {(trays * eggsPerTray).toLocaleString("ru-RU").replace(/,/g, " ")} {lang === "ru" ? "шт" : "dona"}</span>
+                            <span className="font-bold text-slate-700">{formatSum(lt, lang)}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Итого к оплате */}
+                  <div className="flex justify-between items-center bg-slate-900 text-white rounded-lg px-3.5 py-2.5">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-300">{lang === "ru" ? "Итого к оплате" : "Jami to'lov"}</span>
+                    <span className="font-mono font-extrabold text-amber-400">{formatSum(saleTotal, lang)}</span>
+                  </div>
+
+                  {/* Получено денег + быстрые кнопки (ТЗ п.4.4) */}
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      {lang === "ru" ? "Получено денег" : "Qabul qilingan pul"}
+                    </label>
+                    <input
+                      type="number" min="0" inputMode="numeric"
+                      value={saleReceived || ""}
+                      onChange={(e) => setSaleReceived(Math.max(0, Number(e.target.value)))}
+                      placeholder="0"
+                      className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm font-bold focus:outline-none focus:border-amber-400 font-mono"
+                    />
+                    <div className="grid grid-cols-2 gap-2 mt-1">
+                      <button type="button" onClick={() => setSaleReceived(saleTotal)}
+                        className="py-1.5 rounded-md border border-slate-200 bg-white text-[10px] font-bold text-slate-700 hover:bg-slate-50 cursor-pointer">
+                        {lang === "ru" ? "Оплатил всё" : "Hammasini to'ladi"}
+                      </button>
+                      <button type="button" onClick={() => setSaleReceived(0)}
+                        className="py-1.5 rounded-md border border-slate-200 bg-white text-[10px] font-bold text-slate-700 hover:bg-slate-50 cursor-pointer">
+                        {lang === "ru" ? "Ничего не оплатил" : "To'lamadi"}
+                      </button>
                     </div>
                   </div>
 
-                  {/* Quantity Type & Value */}
-                  <div className="grid grid-cols-2 gap-3">
+                  {/* Способ оплаты (если что-то получено) */}
+                  {saleReceived > 0 && (
                     <div className="flex flex-col gap-1.5">
-                      <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Тип</label>
-                      <div className="grid grid-cols-2 gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
-                        <button
-                          type="button"
-                          onClick={() => setSaleQtyType("boxes")}
-                          className={`py-1 rounded-md text-[9px] font-bold transition-all cursor-pointer ${
-                            saleQtyType === "boxes" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
-                          }`}
-                        >
-                          Коробки
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setSaleQtyType("trays")}
-                          className={`py-1 rounded-md text-[9px] font-bold transition-all cursor-pointer ${
-                            saleQtyType === "trays" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
-                          }`}
-                        >
-                          Лотки
-                        </button>
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{t.paymentType}</label>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {[{ id: "cash", label: t.cash }, { id: "card", label: t.card }].map(m => (
+                          <button key={m.id} type="button" onClick={() => setSalePayMethod(m.id as any)}
+                            className={`py-1.5 rounded-md border text-[9px] font-bold uppercase tracking-wider transition-all cursor-pointer ${salePayMethod === m.id ? "bg-slate-900 border-slate-800 text-amber-400" : "bg-white border-slate-200 text-slate-600"}`}>
+                            {m.label}
+                          </button>
+                        ))}
                       </div>
                     </div>
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Кол-во</label>
-                      <input 
-                        type="number" 
-                        min="1"
-                        value={saleQty}
-                        onChange={(e) => setSaleQty(Math.max(0, Number(e.target.value)))}
-                        className="w-full px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold focus:outline-none focus:border-amber-400 font-mono"
-                        required
-                      />
-                    </div>
-                  </div>
+                  )}
 
-                  {/* Payment Type */}
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{t.paymentType}</label>
-                    <div className="grid grid-cols-3 gap-1.5">
-                      {[
-                        { id: "cash", label: t.cash },
-                        { id: "card", label: t.card },
-                        { id: "debt", label: t.debt }
-                      ].map((item) => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          onClick={() => setSalePayment(item.id as any)}
-                          className={`py-1.5 rounded-md border text-[9px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
-                            salePayment === item.id 
-                              ? "bg-slate-900 border-slate-800 text-amber-400" 
-                              : "bg-white border-slate-200 text-slate-600"
-                          }`}
-                        >
-                          {item.label}
-                        </button>
-                      ))}
-                    </div>
+                  {/* В долг / Аванс */}
+                  <div className={`flex justify-between items-center rounded-lg px-3.5 py-2 border ${saleDebtDelta >= 0 ? "bg-red-50 border-red-100" : "bg-emerald-50 border-emerald-100"}`}>
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                      {saleDebtDelta >= 0 ? (lang === "ru" ? "В долг" : "Nasiya") : (lang === "ru" ? "Аванс (переплата)" : "Avans")}
+                    </span>
+                    <span className={`font-mono font-extrabold ${saleDebtDelta >= 0 ? "text-red-600" : "text-emerald-600"}`}>
+                      {formatSum(Math.abs(saleDebtDelta), lang)}
+                    </span>
                   </div>
 
                   <div className="flex gap-3 mt-4">

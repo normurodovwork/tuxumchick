@@ -1,22 +1,20 @@
 {
   "short_name": "Tuxum B2B",
-  "name": "B2B Egg Wholesale Sales",
+  "name": "EggLogistics B2B — учёт оптовых продаж яиц",
   "description": "B2B wholesale egg sales tracking system for wholesalers and deliverers",
   "icons": [
     {
-      "src": "https://picsum.photos/seed/eggs/192/192",
-      "type": "image/png",
-      "sizes": "192x192"
-    },
-    {
-      "src": "https://picsum.photos/seed/eggs/512/512",
-      "type": "image/png",
-      "sizes": "512x512"
+      "src": "/icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any maskable"
     }
   ],
   "start_url": "/",
-  "background_color": "#ffffff",
-  "theme_color": "#ea580c",
+  "scope": "/",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
   "display": "standalone",
-  "orientation": "portrait"
+  "orientation": "portrait",
+  "lang": "ru"
 }

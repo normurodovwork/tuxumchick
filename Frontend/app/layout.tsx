@@ -9,6 +9,24 @@ const inter = Inter({
 export const metadata = {
   title: "EggLogistics B2B",
   description: "Egg Logistics B2B - Сводный обзор компании",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "Tuxum B2B",
+  },
+  icons: {
+    icon: "/icon.svg",
+    apple: "/icon.svg",
+  },
+};
+
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  viewportFit: "cover",
+  themeColor: "#0f172a",
 };
 
 export default function RootLayout({
@@ -19,7 +37,12 @@ export default function RootLayout({
   return (
     <html lang="ru" className={`${inter.variable}`}>
       <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <link rel="manifest" href="/manifest.json" />
+        <meta name="theme-color" content="#0f172a" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        <meta name="apple-mobile-web-app-title" content="Tuxum B2B" />
+        <link rel="apple-touch-icon" href="/icon.svg" />
       </head>
       <body className="font-sans antialiased bg-slate-50 text-slate-900 h-screen w-full overflow-hidden m-0 p-0">
         {children}

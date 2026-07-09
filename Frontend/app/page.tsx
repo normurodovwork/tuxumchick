@@ -28,6 +28,13 @@ export default function Home() {
       setLang(savedLang as Language);
     }
     setHydrated(true);
+
+    // Register the service worker for PWA install + offline (ТЗ п.1.3 / п.7)
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch((err) =>
+        console.warn("SW registration failed:", err)
+      );
+    }
   }, []);
 
   // Poll deliverer status if user is logged in as deliverer to handle immediate blocking
@@ -39,7 +46,7 @@ export default function Home() {
       try {
         const { loadDeliverers } = await import("../lib/db-service");
         const list = await loadDeliverers();
-        const me = list.find((d: any) => 
+        const me: any = list.find((d: any) =>
           d.id === user.id || 
           (user.username && d.username?.toLowerCase() === user.username.toLowerCase()) || 
           d.name === user.name

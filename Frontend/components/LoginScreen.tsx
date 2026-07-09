@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { Shield, Truck, Key, AlertCircle } from "lucide-react";
 import { translations, Language } from "../lib/translations";
-import { loadDeliverers } from "../lib/db-service";
+import { loadDeliverers, verifyPassword } from "../lib/db-service";
 
 interface LoginScreenProps {
   onLogin: (role: "admin" | "deliverer", username: string, details?: { username?: string; id?: string }) => void;
@@ -44,7 +44,7 @@ export default function LoginScreen({ onLogin, lang, setLang, blockedMessage, se
     if (setBlockedMessage) setBlockedMessage(null);
   };
 
-  const handleFormSubmit = (e: React.FormEvent) => {
+  const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanUsername = username.trim().toLowerCase();
     const cleanPassword = password.trim();
@@ -81,7 +81,10 @@ export default function LoginScreen({ onLogin, lang, setLang, blockedMessage, se
     });
 
     if (foundDeliverer) {
-      if (foundDeliverer.password && foundDeliverer.password !== cleanPassword) {
+      const passOk = foundDeliverer.password
+        ? await verifyPassword(cleanPassword, foundDeliverer.password)
+        : true;
+      if (!passOk) {
         setError(lang === "ru" ? "Неверный пароль" : "Noto'g'ri parol");
         return;
       }

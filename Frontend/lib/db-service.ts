@@ -148,13 +148,15 @@ const DEFAULT_PRICES = [
   }
 ];
 
+// Seed passwords are stored hashed (sha256 of "123") to honour ТЗ п.7/8.
+const SEED_PW = "sha256:a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3";
 const DEFAULT_DELIVERERS = [
-  { id: "del-1", name: "Жасур", username: "jasur", phone: "+998901234567", password: "123", status: "online", activePoints: 5 },
-  { id: "del-2", name: "Шохрух", username: "shohruh", phone: "+998901234568", password: "123", status: "online", activePoints: 4 },
-  { id: "del-3", name: "Бобур", username: "bobur", phone: "+998901234569", password: "123", status: "offline", activePoints: 0 },
-  { id: "del-4", name: "Достон", username: "doston", phone: "+998901234570", password: "123", status: "online", activePoints: 6 },
-  { id: "del-5", name: "Азиз", username: "aziz", phone: "+998901234571", password: "123", status: "online", activePoints: 3 },
-  { id: "del-6", name: "Сарвар", username: "sarvar", phone: "+998901234572", password: "123", status: "online", activePoints: 6 }
+  { id: "del-1", name: "Жасур", username: "jasur", phone: "+998901234567", password: SEED_PW, status: "online", activePoints: 5 },
+  { id: "del-2", name: "Шохрух", username: "shohruh", phone: "+998901234568", password: SEED_PW, status: "online", activePoints: 4 },
+  { id: "del-3", name: "Бобур", username: "bobur", phone: "+998901234569", password: SEED_PW, status: "offline", activePoints: 0 },
+  { id: "del-4", name: "Достон", username: "doston", phone: "+998901234570", password: SEED_PW, status: "online", activePoints: 6 },
+  { id: "del-5", name: "Азиз", username: "aziz", phone: "+998901234571", password: SEED_PW, status: "online", activePoints: 3 },
+  { id: "del-6", name: "Сарвар", username: "sarvar", phone: "+998901234572", password: SEED_PW, status: "online", activePoints: 6 }
 ];
 
 let firestoreInstance: any = null;
@@ -456,6 +458,100 @@ export async function saveDeliverer(deliverer: any) {
     deliverers.push(deliverer);
   }
   setLocalItem("egg_deliverers", deliverers);
+}
+
+// ---------------------------------------------------------------------------
+// Accounting logic (ТЗ п.5): debt is ALWAYS derived from operations, never a
+// stored, editable field. Each shop keeps only an `openingDebt` (initial /
+// carried-over balance); the current debt is computed from the ledger.
+//   Долг = openingDebt + Σ(продажа.итого − продажа.получено)
+//          − Σ(приём оплаты) + Σ(корректировки ±)
+// Negative result = переплата (аванс).
+// ---------------------------------------------------------------------------
+
+export function ledgerDelta(log: any): number {
+  if (!log || log.isCancelled) return 0;
+  if (log.type === "sale") {
+    const total = typeof log.total === "number" ? log.total : (log.amount || 0);
+    const received = typeof log.received === "number" ? log.received : 0;
+    return total - received;
+  }
+  if (log.type === "payment") {
+    return -(log.amount || 0);
+  }
+  if (log.type === "adjustment" && typeof log.adjustmentAmount === "number") {
+    return log.adjustmentAmount;
+  }
+  return 0;
+}
+
+export function computeShopDebt(shop: any, logs: any[]): number {
+  const opening = typeof shop.openingDebt === "number"
+    ? shop.openingDebt
+    : (typeof shop.debt === "number" ? shop.debt : 0);
+  let debt = opening;
+  for (const log of logs) {
+    if (log.shopId !== shop.id) continue;
+    debt += ledgerDelta(log);
+  }
+  return debt;
+}
+
+// Overlay computed debt + derived last-purchase / last-payment dates onto shops.
+export function applyComputedDebts(shops: any[], logs: any[]): any[] {
+  return shops.map(shop => {
+    const opening = typeof shop.openingDebt === "number"
+      ? shop.openingDebt
+      : (typeof shop.debt === "number" ? shop.debt : 0);
+    const shopLogs = logs.filter(l => l.shopId === shop.id && !l.isCancelled);
+    let debt = opening;
+    let lastPurchase = shop.lastPurchaseDate || null;
+    let lastPayment = shop.lastPaymentDate || null;
+    for (const log of shopLogs) {
+      debt += ledgerDelta(log);
+      const when = log.operationDate || log.timestamp;
+      if (log.type === "sale") {
+        if (!lastPurchase || new Date(when) > new Date(lastPurchase)) lastPurchase = when;
+        if ((log.received || 0) > 0 && (!lastPayment || new Date(when) > new Date(lastPayment))) lastPayment = when;
+      } else if (log.type === "payment") {
+        if (!lastPayment || new Date(when) > new Date(lastPayment)) lastPayment = when;
+      }
+    }
+    return { ...shop, openingDebt: opening, debt, lastPurchaseDate: lastPurchase, lastPaymentDate: lastPayment };
+  });
+}
+
+// Currency formatting per ТЗ п.1.4: integer sums, thousands separator.
+export function formatSum(amount: number, lang: "ru" | "uz" = "ru"): string {
+  const rounded = Math.round(amount || 0);
+  const abs = Math.abs(rounded).toLocaleString("ru-RU").replace(/,/g, " ");
+  const unit = lang === "uz" ? "so'm" : "сум";
+  return `${rounded < 0 ? "-" : ""}${abs} ${unit}`;
+}
+
+// Password hashing (ТЗ п.7/8): passwords are stored hashed (SHA-256), never
+// in plain text. Legacy plain-text values are still accepted on login.
+export async function hashPassword(plain: string): Promise<string> {
+  const value = (plain || "").trim();
+  try {
+    if (typeof crypto !== "undefined" && crypto.subtle) {
+      const data = new TextEncoder().encode(value);
+      const digest = await crypto.subtle.digest("SHA-256", data);
+      return "sha256:" + Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, "0")).join("");
+    }
+  } catch {
+    // fall through to legacy
+  }
+  return value;
+}
+
+export async function verifyPassword(plain: string, stored: string): Promise<boolean> {
+  if (stored == null) return false;
+  if (typeof stored === "string" && stored.startsWith("sha256:")) {
+    return (await hashPassword(plain)) === stored;
+  }
+  // Legacy plain-text comparison
+  return (plain || "").trim() === String(stored).trim();
 }
 
 // Egg Types Catalog functions
