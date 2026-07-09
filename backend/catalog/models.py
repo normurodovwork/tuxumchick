@@ -31,13 +31,34 @@ class AppSettings(models.Model):
         return obj
 
 
+class KVStore(models.Model):
+    """Небольшое key-value хранилище для вспомогательных данных фронтенда
+    (остатки склада, история цен), не требующих отдельной модели."""
+
+    key = models.CharField(primary_key=True, max_length=64)
+    value = models.JSONField(default=dict, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "kv_store"
+        verbose_name = "Значение (KV)"
+        verbose_name_plural = "KV-хранилище"
+
+    def __str__(self) -> str:
+        return self.key
+
+
 class EggType(models.Model):
-    """Вид яиц — справочник ведёт админ (ТЗ п.4.2, п.8)."""
+    """Вид яиц — справочник ведёт админ (ТЗ п.4.2, п.8).
+
+    Строковый первичный ключ (c0/c1/domestic или egg_<ts>) — совпадает с id,
+    который использует фронтенд (в т.ч. как ключ склада)."""
 
     class Status(models.TextChoices):
         ACTIVE = "active", "Активен"
         ARCHIVED = "archived", "Архив"
 
+    id = models.CharField(primary_key=True, max_length=64)
     name_ru = models.CharField("Название (рус)", max_length=100)
     name_uz = models.CharField("Название (узб)", max_length=100)
     status = models.CharField("Статус", max_length=16, choices=Status.choices, default=Status.ACTIVE)
@@ -96,8 +117,12 @@ class Shop(models.Model):
 
     Текущий долг НЕ хранится как редактируемое поле, а вычисляется из операций
     (ТЗ п.5.1). Хранится только opening_debt — начальный/перенесённый баланс.
+
+    Строковый первичный ключ — совпадает с id, который генерирует фронтенд
+    (shop_<ts>), что позволяет upsert без рассинхронизации идентификаторов.
     """
 
+    id = models.CharField(primary_key=True, max_length=64)
     name = models.CharField("Название фирмы/магазина", max_length=200)
     contact = models.CharField("Контактное лицо", max_length=150, blank=True)
     phone = models.CharField("Телефон", max_length=32, blank=True)

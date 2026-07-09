@@ -49,11 +49,36 @@ pip install -r requirements.txt
 cp .env.example .env      # при необходимости отредактируйте доступы к БД
 
 python manage.py migrate
-python manage.py createsuperuser
+python manage.py seed_demo     # демо-данные: admin/admin123, доставщики .../123
 python manage.py runserver
 ```
 
 Админ-панель: http://localhost:8000/admin/ · Health-check: `/health/`
+
+## REST API (для фронтенда)
+База: `/api/`. Авторизация — токен (`Authorization: Token <key>`).
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| POST | `/api/auth/login/` | вход по логину/телефону + пароль → токен + профиль |
+| POST | `/api/auth/logout/` | выход |
+| GET/POST | `/api/shops/` | список / upsert магазинов (долг вычисляется) |
+| GET/POST | `/api/deliverers/` | доставщики (пароль хешируется на сервере) |
+| GET/POST | `/api/egg-types/` | виды яиц + цена за лоток |
+| GET/PUT | `/api/settings/` | настройки (лотки/яйца/порог) |
+| GET/PUT | `/api/inventory/` | остатки склада |
+| GET/POST | `/api/prices/` | история цен |
+| GET/POST | `/api/operations/` | единая лента операций: продажи, оплаты, корректировки, аудит |
+| PATCH | `/api/operations/<id>/` | правка/аннулирование операции |
+
+Лента `/api/operations/` — «мост»: фронтенд шлёт/получает плоские объекты
+операций, а сервер раскладывает их по нормализованным моделям
+(Sale/SaleItem, Payment, Adjustment, ActivityLog) и обратно. Долг магазина
+всегда пересчитывается из непогашенных операций.
+
+## Подключение фронтенда
+Во фронтенде (`../Frontend`) задайте `NEXT_PUBLIC_API_URL=http://localhost:8000/api`.
+Фронтенд использует этот API вместо Firestore.
 
 ## Переменные окружения
 См. `.env.example` — доступы к PostgreSQL, `DJANGO_SECRET_KEY`, CORS.

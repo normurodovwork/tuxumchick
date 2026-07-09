@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { Shield, Truck, Key, AlertCircle } from "lucide-react";
 import { translations, Language } from "../lib/translations";
-import { loadDeliverers, verifyPassword } from "../lib/db-service";
+import { apiLogin } from "../lib/db-service";
 
 interface LoginScreenProps {
   onLogin: (role: "admin" | "deliverer", username: string, details?: { username?: string; id?: string }) => void;
@@ -17,20 +17,8 @@ export default function LoginScreen({ onLogin, lang, setLang, blockedMessage, se
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const [dbDeliverers, setDbDeliverers] = useState<any[]>([]);
+  const [submitting, setSubmitting] = useState(false);
   const t = translations[lang];
-
-  useEffect(() => {
-    async function fetchDels() {
-      try {
-        const list = await loadDeliverers();
-        setDbDeliverers(list);
-      } catch (err) {
-        console.error("Failed to load deliverers for login:", err);
-      }
-    }
-    fetchDels();
-  }, []);
 
   const handleUsernameChange = (val: string) => {
     setUsername(val);
@@ -44,86 +32,38 @@ export default function LoginScreen({ onLogin, lang, setLang, blockedMessage, se
     if (setBlockedMessage) setBlockedMessage(null);
   };
 
+  const doLogin = async (login: string, pwd: string) => {
+    setSubmitting(true);
+    try {
+      const res = await apiLogin(login, pwd);
+      if (!res.ok) {
+        setError(res.detail || (lang === "ru" ? "Неверный логин или пароль" : "Noto'g'ri login yoki parol"));
+        return;
+      }
+      const u = res.user;
+      onLogin(u.role, u.name, { username: u.username, id: u.id });
+    } catch (err) {
+      setError(lang === "ru" ? "Нет связи с сервером" : "Server bilan aloqa yo'q");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanUsername = username.trim().toLowerCase();
+    const cleanUsername = username.trim();
     const cleanPassword = password.trim();
-
     if (!cleanPassword) {
       setError(lang === "ru" ? "Пожалуйста, введите пароль" : "Iltimos, parolni kiriting");
       return;
     }
-
-    if (cleanUsername === "admin") {
-      if (cleanPassword === "admin" || cleanPassword === "123" || cleanPassword === "admin123") {
-        onLogin("admin", "Алишер К.");
-        return;
-      } else {
-        setError(lang === "ru" ? "Неверный пароль администратора" : "Administrator paroli noto'g'ri");
-        return;
-      }
-    }
-
-    // Try to find the deliverer in dynamic list
-    const foundDeliverer = dbDeliverers.find(d => {
-      const dbUser = (d.username || "").toLowerCase();
-      const dbPhone = (d.phone || "").replace(/[\s+]/g, "");
-      const dbName = (d.name || "").toLowerCase();
-      
-      const searchInput = cleanUsername.replace(/[\s+]/g, "");
-
-      // Robust phone matching using last 9 digits if they are digits
-      const isPhoneMatch = dbPhone.length >= 9 && searchInput.length >= 9 && 
-                           /^\d+$/.test(dbPhone) && /^\d+$/.test(searchInput) &&
-                           dbPhone.slice(-9) === searchInput.slice(-9);
-
-      return dbUser === cleanUsername || dbPhone === searchInput || isPhoneMatch || dbName === cleanUsername;
-    });
-
-    if (foundDeliverer) {
-      const passOk = foundDeliverer.password
-        ? await verifyPassword(cleanPassword, foundDeliverer.password)
-        : true;
-      if (!passOk) {
-        setError(lang === "ru" ? "Неверный пароль" : "Noto'g'ri parol");
-        return;
-      }
-
-      if (foundDeliverer.status === "blocked") {
-        setError(
-          lang === "ru"
-            ? "Ваша учётная запись заблокирована администратором."
-            : "Sizning hisobingiz administrator tomonidan bloklangan."
-        );
-        return;
-      }
-
-      onLogin("deliverer", foundDeliverer.name, { username: foundDeliverer.username, id: foundDeliverer.id });
-    } else {
-      setError(
-        lang === "ru"
-          ? "Неверный логин или телефон. Попробуйте войти по имени (например, 'jasur') или по номеру телефона."
-          : "Noto'g'ri login yoki telefon raqami. Ism (masalan, 'jasur') yoki telefon orqali kirishga urining."
-      );
-    }
+    await doLogin(cleanUsername, cleanPassword);
   };
 
+  // Демо-вход (соответствует seed_demo на бэкенде)
   const handleQuickLogin = (role: "admin" | "deliverer") => {
-    if (role === "admin") {
-      onLogin("admin", "Алишер К.");
-    } else {
-      // Find jasur in DB list and make sure he's not blocked
-      const jasur = dbDeliverers.find(d => (d.username || "").toLowerCase() === "jasur");
-      if (jasur && jasur.status === "blocked") {
-        setError(
-          lang === "ru"
-            ? "Учётная запись 'Жасур' заблокирована."
-            : "'Jasur' hisobi bloklangan."
-        );
-        return;
-      }
-      onLogin("deliverer", "Жасур", jasur ? { username: jasur.username, id: jasur.id } : undefined);
-    }
+    if (role === "admin") doLogin("admin", "admin123");
+    else doLogin("jasur", "123");
   };
 
   return (

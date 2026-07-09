@@ -13,7 +13,7 @@ import {
   loadShops, saveShop, loadActivityLogs, addActivityLog,
   loadPriceHistory, addPriceRecord, loadDeliverers, saveDeliverer,
   updateActivityLog, loadEggTypes, saveEggType,
-  applyComputedDebts, formatSum, hashPassword, ledgerDelta
+  applyComputedDebts, formatSum, ledgerDelta
 } from "../lib/db-service";
 import { translations, Language } from "../lib/translations";
 
@@ -461,20 +461,14 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
 
     try {
       const id = editingDeliverer ? editingDeliverer.id : "del-" + Date.now();
-      // Store hashed (ТЗ п.7/8). Blank on edit = keep current; new account defaults to "123".
-      let storedPass: string;
-      if (!delPassword.trim() && editingDeliverer) {
-        storedPass = editingDeliverer.password;
-      } else {
-        const rawPass = delPassword.trim() || "123";
-        storedPass = rawPass.startsWith("sha256:") ? rawPass : await hashPassword(rawPass);
-      }
+      // Пароль отправляется «сырым» — бэкенд хеширует его (pbkdf2).
+      // Пустой пароль при редактировании = оставить текущий (ТЗ: админ сбрасывает пароли).
       const payload = {
         id,
         name: delName,
         username: delUsername.toLowerCase().trim(),
         phone: delPhone.trim(),
-        password: storedPass,
+        password: delPassword.trim(),
         status: delStatus,
         activePoints: editingDeliverer ? editingDeliverer.activePoints || 0 : 0
       };

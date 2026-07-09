@@ -40,6 +40,9 @@ class Sale(models.Model):
         "Способ оплаты", max_length=8, choices=PaymentMethod.choices, default=PaymentMethod.CASH,
     )
     comment = models.CharField("Комментарий", max_length=300, blank=True)
+    # Человекочитаемое описание (локализованное на фронтенде), для ленты операций.
+    message = models.TextField("Описание", blank=True)
+    is_edited = models.BooleanField("Изменена", default=False)
 
     is_cancelled = models.BooleanField("Аннулирована", default=False)
     cancelled_by = models.ForeignKey(
@@ -115,6 +118,8 @@ class Payment(models.Model):
         "Способ оплаты", max_length=8, choices=PaymentMethod.choices, default=PaymentMethod.CASH,
     )
     comment = models.CharField("Комментарий", max_length=300, blank=True)
+    message = models.TextField("Описание", blank=True)
+    is_edited = models.BooleanField("Изменена", default=False)
 
     is_cancelled = models.BooleanField("Аннулирована", default=False)
     cancelled_by = models.ForeignKey(
@@ -146,6 +151,7 @@ class Adjustment(models.Model):
     )
     amount = models.DecimalField("Сумма (±)", max_digits=14, decimal_places=2, help_text="Плюс увеличивает долг, минус — уменьшает")
     reason = models.CharField("Причина", max_length=300)
+    message = models.TextField("Описание", blank=True)
 
     is_cancelled = models.BooleanField("Аннулирована", default=False)
     created_at = models.DateTimeField("Создана", auto_now_add=True)
@@ -180,6 +186,11 @@ class ActivityLog(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
         related_name="activity_logs", verbose_name="Пользователь",
     )
+    shop = models.ForeignKey(
+        Shop, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="activity_logs", verbose_name="Магазин",
+    )
+    operator_label = models.CharField("Оператор (текст)", max_length=150, blank=True)
     action = models.CharField("Действие", max_length=16, choices=Action.choices, default=Action.OTHER)
     object_type = models.CharField("Объект", max_length=64, blank=True)
     object_id = models.CharField("ID объекта", max_length=64, blank=True)

@@ -84,7 +84,9 @@ export default function Home() {
     localStorage.setItem("egg_auth_user", JSON.stringify(userData));
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    const { apiLogout } = await import("../lib/db-service");
+    apiLogout();
     setUser(null);
     localStorage.removeItem("egg_auth_user");
     setBlockedMessage(null);
