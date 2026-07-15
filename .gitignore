@@ -1,0 +1,30 @@
+# Корневой .gitignore (для артефактов, не покрытых Backend/.gitignore и Frontend/.gitignore)
+
+# Секреты окружения — НИКОГДА не коммитить (шаблон — .env.example)
+.env
+.env.*
+!.env.example
+
+# Локальные БД и dev-оверрайды настроек
+*.sqlite3
+local_*settings.py
+
+# Артефакты сборки Next.js, если оказались в корне
+.next/
+out/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Node
+node_modules/
+
+# Инструменты агента / IDE / ОС
+.claude/
+.DS_Store
+.idea/
+.vscode/
+*.log

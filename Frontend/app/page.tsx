@@ -29,11 +29,21 @@ export default function Home() {
     }
     setHydrated(true);
 
-    // Register the service worker for PWA install + offline (ТЗ п.1.3 / п.7)
+    // Register the service worker for PWA install + offline (ТЗ п.1.3 / п.7).
+    // Только в production: в dev SW кэширует нехэшированные чанки Next
+    // и «замораживает» старый интерфейс (HMR перестаёт доезжать до браузера).
     if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js").catch((err) =>
-        console.warn("SW registration failed:", err)
-      );
+      if (process.env.NODE_ENV === "production") {
+        navigator.serviceWorker.register("/sw.js").catch((err) =>
+          console.warn("SW registration failed:", err)
+        );
+      } else {
+        // Dev: снять ранее установленный SW и его кэш, чтобы не отдавал старый бандл.
+        navigator.serviceWorker.getRegistrations().then((regs) => regs.forEach((r) => r.unregister()));
+        if ("caches" in window) {
+          caches.keys().then((keys) => keys.forEach((k) => caches.delete(k)));
+        }
+      }
     }
   }, []);
 

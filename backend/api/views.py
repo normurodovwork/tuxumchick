@@ -4,6 +4,7 @@ from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import api_view, permission_classes
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
@@ -17,6 +18,20 @@ User = get_user_model()
 
 def num(x):
     return float(x) if x is not None else 0
+
+
+def _is_admin(user) -> bool:
+    return bool(
+        getattr(user, "is_authenticated", False)
+        and (getattr(user, "is_admin", False) or getattr(user, "is_staff", False))
+    )
+
+
+def _require_admin(request):
+    """Разрешает действие только администратору (ТЗ п.4 — управление справочниками,
+    ценами, настройками и доставщиками — прерогатива админа)."""
+    if not _is_admin(request.user):
+        raise PermissionDenied("Действие доступно только администратору.")
 
 
 # ------------------------------- Auth -------------------------------------
@@ -90,20 +105,24 @@ def shops(request):
     if request.method == "GET":
         return Response([shop_dict(s) for s in Shop.objects.all()])
     d = request.data
-    opening = d.get("openingDebt", d.get("debt", 0)) or 0
-    obj, _ = Shop.objects.update_or_create(
-        id=d["id"],
-        defaults={
-            "name": d.get("name", ""),
-            "contact": d.get("contact", "") or "",
-            "phone": d.get("phone", "") or "",
-            "address": d.get("address", "") or "",
-            "note": d.get("note", "") or "",
-            "is_archived": bool(d.get("isArchived", False)),
-            "opening_debt": Decimal(str(opening)),
-            "created_by": request.user if request.user.is_authenticated else None,
-        },
-    )
+    existing = Shop.objects.filter(id=d["id"]).first()
+    fields = {
+        "name": d.get("name", ""),
+        "contact": d.get("contact", "") or "",
+        "phone": d.get("phone", "") or "",
+        "address": d.get("address", "") or "",
+        "note": d.get("note", "") or "",
+        "is_archived": bool(d.get("isArchived", False)),
+    }
+    # Начальный долг: не-админ может задать его только при СОЗДАНИИ новой точки.
+    # Менять opening_debt существующего магазина (обход «долг руками не править»,
+    # ТЗ п.5.1) вправе только администратор.
+    if existing is None:
+        fields["opening_debt"] = Decimal(str(d.get("openingDebt", d.get("debt", 0)) or 0))
+        fields["created_by"] = request.user if request.user.is_authenticated else None
+    elif _is_admin(request.user) and ("openingDebt" in d or "debt" in d):
+        fields["opening_debt"] = Decimal(str(d.get("openingDebt", d.get("debt", 0)) or 0))
+    obj, _ = Shop.objects.update_or_create(id=d["id"], defaults=fields)
     return Response(shop_dict(obj))
 
 
@@ -118,14 +137,29 @@ def deliverers(request):
     if request.method == "GET":
         qs = User.objects.filter(role=User.Role.DELIVERER).order_by("full_name")
         return Response([deliverer_dict(u) for u in qs])
+
+    # Управление учётными записями — только администратор (ТЗ п.4.1).
+    _require_admin(request)
     d = request.data
     pk = d.get("id")
     user = User.objects.filter(pk=pk).first() if pk and str(pk).isdigit() else None
+    # Нельзя «превратить» админа/стороннего пользователя в доставщика через этот эндпоинт.
+    if user is not None and user.role != User.Role.DELIVERER:
+        raise PermissionDenied("Этот пользователь не является доставщиком.")
     if user is None:
         user = User(role=User.Role.DELIVERER)
-    user.username = (d.get("username") or "").lower().strip()
+    username = (d.get("username") or "").lower().strip()
+    if not username:
+        return Response({"detail": "Укажите логин"}, status=400)
+    # Проверка уникальности логина (иначе save() падал бы с 500).
+    if User.objects.filter(username=username).exclude(pk=user.pk).exists():
+        return Response({"detail": "Логин уже занят"}, status=400)
+    phone = (d.get("phone") or "").strip() or None
+    if phone and User.objects.filter(phone=phone).exclude(pk=user.pk).exists():
+        return Response({"detail": "Телефон уже используется"}, status=400)
+    user.username = username
     user.full_name = d.get("name", "") or ""
-    user.phone = (d.get("phone") or "").strip()
+    user.phone = phone
     user.status = d.get("status", User.Status.OFFLINE)
     user.role = User.Role.DELIVERER
     pw = d.get("password")
@@ -153,6 +187,8 @@ def egg_dict(e: EggType):
 def egg_types(request):
     if request.method == "GET":
         return Response([egg_dict(e) for e in EggType.objects.all()])
+    # Справочник видов яиц и цены ведёт только администратор (ТЗ п.4.2).
+    _require_admin(request)
     d = request.data
     obj, _ = EggType.objects.update_or_create(
         id=d["id"],
@@ -179,6 +215,8 @@ def settings_dict(s: AppSettings):
 def settings_view(request):
     s = AppSettings.load()
     if request.method != "GET":
+        # Системные настройки меняет только администратор (ТЗ п.8).
+        _require_admin(request)
         d = request.data
         s.trays_per_box = int(d.get("traysPerBox", s.trays_per_box))
         s.eggs_per_tray = int(d.get("eggsPerTray", s.eggs_per_tray))
@@ -211,6 +249,8 @@ def prices_view(request):
     history = _kv_get("price_history", [])
     if request.method == "GET":
         return Response(history)
+    # Историю цен пишет только администратор.
+    _require_admin(request)
     record = dict(request.data)
     record.setdefault("id", f"price-{len(history) + 1}")
     history = [record] + (history if isinstance(history, list) else [])

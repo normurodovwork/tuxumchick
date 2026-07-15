@@ -1,20 +1,34 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# Tuxumchick — Frontend (PWA)
 
-# Run and deploy your AI Studio app
+Клиент на **Next.js 15 / React 19 / Tailwind CSS 4**. PWA для учёта оптовых
+продаж яиц: дашборд администратора и мобильный кабинет доставщика. Общается
+с Django-бэкендом (`../backend`) по REST API.
 
-This contains everything you need to run your app locally.
+## Требования
+- Node.js 20+
 
-View your app in AI Studio: https://ai.studio/apps/be705015-fdc9-4d91-920e-b46336def2ed
+## Локальный запуск
+```bash
+npm install
+echo 'NEXT_PUBLIC_API_URL=http://localhost:8000/api' > .env.local
+npm run dev            # http://localhost:3000
+```
+Бэкенд должен быть запущен и доступен по адресу из `NEXT_PUBLIC_API_URL`
+(см. `../backend/README.md`).
 
-## Run Locally
+## Сборка (production)
+```bash
+npm run build         # standalone-выход (Dockerfile использует /.next/standalone)
+npm run start
+```
 
-**Prerequisites:**  Node.js
+## Переменные окружения
+- `NEXT_PUBLIC_API_URL` — адрес REST API бэкенда, **инлайнится при сборке**
+  (fetch выполняется в браузере), поэтому должен указывать на публичный адрес
+  бэкенда. См. `.env.example`.
 
-
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## Структура
+- `app/` — App Router: `layout.tsx`, `page.tsx` (корневой роутер по роли), `globals.css`.
+- `components/` — `LoginScreen`, `AdminDashboard`, `DelivererDashboard`.
+- `lib/` — `db-service.ts` (клиент REST API), `translations.ts` (RU/UZ).
+- `public/` — `manifest.json`, `sw.js` (service worker), иконка.

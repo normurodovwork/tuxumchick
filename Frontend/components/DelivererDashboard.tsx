@@ -4,7 +4,8 @@ import React, { useState, useEffect, useMemo } from "react";
 import { 
   Truck, DollarSign, LogOut, CheckCircle2, 
   MapPin, Clipboard, Plus, Shield, Check, X, ArrowRight, Loader2,
-  Calendar, Clock, Edit2, Trash2, History, User, ListFilter, Building2, BookOpen
+  Calendar, Clock, Edit2, Trash2, History, User, ListFilter, Building2, BookOpen,
+  Zap, AlertTriangle
 } from "lucide-react";
 import {
   loadShops, saveShop, loadSettings, loadInventory, saveInventory,
@@ -1174,8 +1175,9 @@ export default function DelivererDashboard({ username, onLogout, lang, setLang }
 
                     {isInlineCreateShopOpen ? (
                       <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 flex flex-col gap-2.5 animate-in slide-in-from-top-2">
-                        <p className="text-[11px] font-bold text-slate-700">
-                          {lang === "ru" ? "🚀 Быстрое добавление новой точки" : "🚀 Yangi nuqtani tezkor qo'shish"}
+                        <p className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5">
+                          <Zap className="w-3.5 h-3.5 text-amber-500 shrink-0" aria-hidden="true" />
+                          {lang === "ru" ? "Быстрое добавление новой точки" : "Yangi nuqtani tezkor qo'shish"}
                         </p>
                         
                         <div className="flex flex-col gap-1">
@@ -1189,8 +1191,9 @@ export default function DelivererDashboard({ username, onLogout, lang, setLang }
                           
                           {inlineSimilarShops.length > 0 && (
                             <div className="bg-amber-50 border border-amber-200 text-slate-800 text-[10px] p-2 rounded flex flex-col gap-1 mt-1">
-                              <p className="font-bold text-amber-800">
-                                {lang === "ru" ? "⚠️ Похожая торговая точка уже есть:" : "⚠️ O'xshash do'kon allaqachon bor:"}
+                              <p className="font-bold text-amber-800 flex items-center gap-1.5">
+                                <AlertTriangle className="w-3 h-3 shrink-0" aria-hidden="true" />
+                                {lang === "ru" ? "Похожая торговая точка уже есть:" : "O'xshash do'kon allaqachon bor:"}
                               </p>
                               <div className="flex flex-col gap-1 max-h-[80px] overflow-y-auto">
                                 {inlineSimilarShops.map(s => (
@@ -1470,8 +1473,9 @@ export default function DelivererDashboard({ username, onLogout, lang, setLang }
                     {/* Similar points warning */}
                     {similarShops.length > 0 && (
                       <div className="bg-amber-50 border border-amber-200 text-slate-800 text-[11px] p-2.5 rounded-lg flex flex-col gap-1.5 mt-1">
-                        <p className="font-bold text-amber-800">
-                          {lang === "ru" ? "⚠️ Найдена похожая торговая точка:" : "⚠️ O'xshash do'kon topildi:"}
+                        <p className="font-bold text-amber-800 flex items-center gap-1.5">
+                          <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                          {lang === "ru" ? "Найдена похожая торговая точка:" : "O'xshash do'kon topildi:"}
                         </p>
                         <div className="flex flex-col gap-1 max-h-[90px] overflow-y-auto">
                           {similarShops.map(s => (
@@ -1607,8 +1611,9 @@ export default function DelivererDashboard({ username, onLogout, lang, setLang }
             const purchaseLogs = sortedShopLogs.filter(log => !log.isCancelled && (log.type === "sale" || log.paymentType === "debt" || log.message.toLowerCase().includes("продаж") || log.message.toLowerCase().includes("sotuv") || log.qty));
             const lastPurchase = purchaseLogs[0] || null;
 
-            // Extract last payment details
-            const paymentLogs = sortedShopLogs.filter(log => !log.isCancelled && (log.type === "payment" || log.paymentType !== "debt" || log.message.toLowerCase().includes("оплат") || log.message.toLowerCase().includes("to'lov")));
+            // Extract last payment details — только операции «Приём оплаты»
+            // (раньше сюда по paymentType !== "debt" попадали и продажи).
+            const paymentLogs = sortedShopLogs.filter(log => !log.isCancelled && log.type === "payment");
             const lastPayment = paymentLogs[0] || null;
 
             // Filter history list by dates

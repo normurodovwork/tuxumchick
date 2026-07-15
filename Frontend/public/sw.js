@@ -1,7 +1,7 @@
 // Basic service worker for PWA install + offline app-shell (ТЗ п.1.3 / п.7).
 // Network-first for navigation so the app stays fresh, with a cache fallback
 // when the connection drops. Static assets are cached on demand.
-const CACHE = "egg-b2b-v1";
+const CACHE = "egg-b2b-v2";
 const APP_SHELL = ["/", "/manifest.json", "/icon.svg"];
 
 self.addEventListener("install", (event) => {
@@ -35,16 +35,18 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  // Stale-while-revalidate: отдаём кэш мгновенно, но в фоне обновляем его,
+  // чтобы после деплоя пользователи получали свежие ассеты (не «вечный» кэш).
   event.respondWith(
-    caches.match(req).then((cached) =>
-      cached ||
-      fetch(req).then((res) => {
+    caches.match(req).then((cached) => {
+      const fresh = fetch(req).then((res) => {
         if (res && res.status === 200 && res.type === "basic") {
           const copy = res.clone();
           caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
         }
         return res;
-      }).catch(() => cached)
-    )
+      }).catch(() => cached);
+      return cached || fresh;
+    })
   );
 });

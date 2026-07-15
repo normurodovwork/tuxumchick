@@ -21,16 +21,22 @@ services:
         condition: service_healthy
     environment:
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-dev-insecure-change-me}
-      DJANGO_DEBUG: ${DJANGO_DEBUG:-True}
+      # По умолчанию прод-безопасно (False). Для локальной отладки задайте True в .env.
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-False}
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-*}
       POSTGRES_DB: ${POSTGRES_DB:-tuxumchick}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_HOST: db
       POSTGRES_PORT: "5432"
-      CORS_ALLOW_ALL: ${CORS_ALLOW_ALL:-True}
+      CORS_ALLOW_ALL: ${CORS_ALLOW_ALL:-False}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
-      SEED_DEMO: ${SEED_DEMO:-true}
+      # HTTPS-хардненинг (вкл. при работе за TLS-прокси) и доверенные CSRF-домены.
+      DJANGO_SECURE_SSL: ${DJANGO_SECURE_SSL:-False}
+      CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:-}
+      # Демо-данные (admin/admin123 и т.п.) по умолчанию ВЫКЛ. Для прод оставляйте false;
+      # первого администратора создавайте через `manage.py createsuperuser`.
+      SEED_DEMO: ${SEED_DEMO:-false}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     restart: unless-stopped

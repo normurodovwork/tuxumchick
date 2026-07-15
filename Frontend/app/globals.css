@@ -1,1 +1,19 @@
 @import "tailwindcss";
+
+/*
+ * Типографика (Tailwind v4): связываем утилиты font-sans / font-mono
+ * со шрифтами из next/font (Inter + JetBrains Mono, оба с кириллицей).
+ * Без этого font-mono падал в системный Courier — кириллица выглядела
+ * как «печатная машинка».
+ */
+@theme inline {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-jbmono), ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+/* Данные и суммы: табличные цифры — колонки чисел не «пляшут» по ширине. */
+.font-mono,
+table td,
+table th {
+  font-variant-numeric: tabular-nums;
+}

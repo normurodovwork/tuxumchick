@@ -6,7 +6,8 @@ import {
   Settings, LogOut, CheckCircle2, AlertTriangle, Layers, Clock, 
   Edit2, Save, X, PlusCircle, Check, Loader2, Trash2, Shield, 
   Eye, EyeOff, FileSpreadsheet, Archive, Ban, BookOpen, UserPlus, 
-  FileText, CheckSquare, Plus, RefreshCw, Building2, History, Edit
+  FileText, CheckSquare, Plus, RefreshCw, Building2, History, Edit,
+  LayoutDashboard, Store, Egg, ShieldCheck, Lightbulb, Menu
 } from "lucide-react";
 import {
   loadSettings, saveSettings, loadInventory, saveInventory,
@@ -31,6 +32,8 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
 
   // Primary States
   const [activeTab, setActiveTab] = useState<AdminTab>("dashboard");
+  // Мобильное меню (drawer): сайдбар скрыт по умолчанию на телефоне.
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [settings, setSettings] = useState<any>(null);
   const [inventory, setInventory] = useState<any>(null);
   const [shops, setShops] = useState<any[]>([]);
@@ -1024,13 +1027,17 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
 
   // Period range for the dashboard (ТЗ п.4.7)
   const dashRange = useMemo(() => {
-    const now = new Date();
     const start = new Date();
+    // Верхняя граница периода — конец текущего дня, а не «сейчас»: продажа
+    // с operationDate позже текущего момента (напр. дата без времени → полдень)
+    // иначе считалась бы «будущей» и выпадала из «Сегодня/Неделя/Месяц».
+    const end = new Date();
+    end.setHours(23, 59, 59, 999);
     if (dashPeriod === "today") start.setHours(0, 0, 0, 0);
-    else if (dashPeriod === "week") start.setDate(now.getDate() - 7);
-    else if (dashPeriod === "month") start.setMonth(now.getMonth() - 1);
+    else if (dashPeriod === "week") { start.setDate(start.getDate() - 7); start.setHours(0, 0, 0, 0); }
+    else if (dashPeriod === "month") { start.setMonth(start.getMonth() - 1); start.setHours(0, 0, 0, 0); }
     else return { start: null as Date | null, end: null as Date | null };
-    return { start, end: now };
+    return { start, end };
   }, [dashPeriod]);
 
   const inDashRange = (log: any) => {
@@ -1207,21 +1214,41 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
         </div>
       )}
 
-      {/* Sidebar Navigation */}
-      <aside className="w-64 bg-slate-900 text-white flex flex-col shrink-0 border-r border-slate-800">
+      {/* Мобильный бэкдроп: затемняет контент, закрывает меню по клику */}
+      {sidebarOpen && (
+        <div
+          onClick={() => setSidebarOpen(false)}
+          className="fixed inset-0 z-40 bg-black/50 lg:hidden"
+          aria-hidden="true"
+        />
+      )}
+
+      {/* Sidebar Navigation — статичная колонка на десктопе, выдвижной drawer на мобилке */}
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 w-64 max-w-[80%] bg-slate-900 text-white flex flex-col shrink-0 border-r border-slate-800 transform transition-transform duration-300 ease-in-out lg:static lg:z-auto lg:translate-x-0 lg:max-w-none ${
+          sidebarOpen ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
         <div className="p-6 flex items-center gap-3 border-b border-slate-800">
-          <div className="w-8 h-8 bg-amber-400 rounded-full flex items-center justify-center text-slate-900 font-bold italic">E</div>
           <span className="font-bold tracking-tight text-xl">EggLogistics <span className="text-amber-400 text-xs align-top font-mono">B2B</span></span>
+          {/* Кнопка закрытия меню (только мобилка) */}
+          <button
+            onClick={() => setSidebarOpen(false)}
+            className="ml-auto p-1 text-slate-400 hover:text-white lg:hidden cursor-pointer"
+            aria-label={lang === "ru" ? "Закрыть меню" : "Menyuni yopish"}
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
-        
-        <nav className="flex-1 py-6 flex flex-col gap-1 overflow-y-auto">
+
+        <nav onClick={() => setSidebarOpen(false)} className="flex-1 py-6 flex flex-col gap-1 overflow-y-auto">
           <button 
             onClick={() => setActiveTab("dashboard")}
             className={`flex items-center px-6 py-3 font-medium text-sm text-left transition-all cursor-pointer ${
               activeTab === "dashboard" ? "bg-slate-800 text-amber-400 border-l-4 border-amber-400" : "text-slate-400 hover:bg-slate-800 hover:text-white"
             }`}
           >
-            <span className="mr-3 opacity-80 text-base">📊</span> {t.dashboard}
+            <LayoutDashboard className="mr-3 w-[18px] h-[18px] shrink-0 opacity-80" /> {t.dashboard}
           </button>
 
           <button 
@@ -1230,7 +1257,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
               activeTab === "deliverers" ? "bg-slate-800 text-amber-400 border-l-4 border-amber-400" : "text-slate-400 hover:bg-slate-800 hover:text-white"
             }`}
           >
-            <span className="mr-3 opacity-80 text-base">🚚</span> 
+            <Truck className="mr-3 w-[18px] h-[18px] shrink-0 opacity-80" />
             <span>{lang === "ru" ? "Доставщики" : "Yetkazib beruvchilar"}</span>
           </button>
 
@@ -1240,7 +1267,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
               activeTab === "shops" ? "bg-slate-800 text-amber-400 border-l-4 border-amber-400" : "text-slate-400 hover:bg-slate-800 hover:text-white"
             }`}
           >
-            <span className="mr-3 opacity-80 text-base">🏪</span> {t.shops}
+            <Store className="mr-3 w-[18px] h-[18px] shrink-0 opacity-80" /> {t.shops}
           </button>
 
           <button 
@@ -1249,7 +1276,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
               activeTab === "operations" ? "bg-slate-800 text-amber-400 border-l-4 border-amber-400" : "text-slate-400 hover:bg-slate-800 hover:text-white"
             }`}
           >
-            <span className="mr-3 opacity-80 text-base">📖</span> 
+            <BookOpen className="mr-3 w-[18px] h-[18px] shrink-0 opacity-80" />
             <span>{lang === "ru" ? "Журнал операций" : "Amaliyotlar jurnali"}</span>
           </button>
 
@@ -1259,7 +1286,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
               activeTab === "egg_types" ? "bg-slate-800 text-amber-400 border-l-4 border-amber-400" : "text-slate-400 hover:bg-slate-800 hover:text-white"
             }`}
           >
-            <span className="mr-3 opacity-80 text-base">🥚</span> 
+            <Egg className="mr-3 w-[18px] h-[18px] shrink-0 opacity-80" />
             <span>{lang === "ru" ? "Справочник яиц" : "Tuxum turlari"}</span>
           </button>
 
@@ -1269,7 +1296,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
               activeTab === "reports" ? "bg-slate-800 text-amber-400 border-l-4 border-amber-400" : "text-slate-400 hover:bg-slate-800 hover:text-white"
             }`}
           >
-            <span className="mr-3 opacity-80 text-base">📊</span>
+            <FileSpreadsheet className="mr-3 w-[18px] h-[18px] shrink-0 opacity-80" />
             <span>{lang === "ru" ? "Отчёты (Excel)" : "Hisobotlar (Excel)"}</span>
           </button>
 
@@ -1279,7 +1306,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
               activeTab === "audit" ? "bg-slate-800 text-amber-400 border-l-4 border-amber-400" : "text-slate-400 hover:bg-slate-800 hover:text-white"
             }`}
           >
-            <span className="mr-3 opacity-80 text-base">🛡️</span>
+            <ShieldCheck className="mr-3 w-[18px] h-[18px] shrink-0 opacity-80" />
             <span>{lang === "ru" ? "Журнал действий" : "Harakatlar jurnali"}</span>
           </button>
         </nav>
@@ -1315,19 +1342,29 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
         <main className="flex-1 flex flex-col overflow-hidden">
           
           {/* Header Bar */}
-          <header className="h-16 bg-white border-b border-slate-200 px-8 flex items-center justify-between shrink-0">
-            <h1 className="text-lg font-semibold text-slate-800 font-sans tracking-tight uppercase">
-              {activeTab === "dashboard" ? t.companySummary :
-               activeTab === "deliverers" ? (lang === "ru" ? "Управление доставщиками" : "Yetkazib beruvchilarni boshqarish") :
-               activeTab === "shops" ? (lang === "ru" ? "Справочник торговых точек" : "Do'konlar va mijozlar") :
-               activeTab === "operations" ? (lang === "ru" ? "Корректировка и аннулирование операций" : "Amaliyotlarni tahrirlash va bekor qilish") :
-               activeTab === "egg_types" ? (lang === "ru" ? "Справочник видов яиц и цен" : "Tuxum turlari va narxlari") :
-               activeTab === "reports" ? (lang === "ru" ? "Отчёты и выгрузка в Excel" : "Hisobotlar va Excel") :
-               (lang === "ru" ? "Системный журнал действий" : "Tizim harakatlari jurnali")}
-            </h1>
-            
-            <div className="flex items-center gap-4">
-              
+          <header className="h-16 bg-white border-b border-slate-200 px-4 sm:px-6 lg:px-8 flex items-center justify-between gap-2 shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
+              {/* Гамбургер — открывает меню на мобилке */}
+              <button
+                onClick={() => setSidebarOpen(true)}
+                className="p-2 -ml-1 text-slate-600 hover:bg-slate-100 rounded-lg lg:hidden cursor-pointer shrink-0"
+                aria-label={lang === "ru" ? "Открыть меню" : "Menyuni ochish"}
+              >
+                <Menu className="w-5 h-5" />
+              </button>
+              <h1 className="text-sm sm:text-base lg:text-lg font-semibold text-slate-800 font-sans tracking-tight uppercase truncate">
+                {activeTab === "dashboard" ? t.companySummary :
+                 activeTab === "deliverers" ? (lang === "ru" ? "Управление доставщиками" : "Yetkazib beruvchilarni boshqarish") :
+                 activeTab === "shops" ? (lang === "ru" ? "Справочник торговых точек" : "Do'konlar va mijozlar") :
+                 activeTab === "operations" ? (lang === "ru" ? "Корректировка и аннулирование операций" : "Amaliyotlarni tahrirlash va bekor qilish") :
+                 activeTab === "egg_types" ? (lang === "ru" ? "Справочник видов яиц и цен" : "Tuxum turlari va narxlari") :
+                 activeTab === "reports" ? (lang === "ru" ? "Отчёты и выгрузка в Excel" : "Hisobotlar va Excel") :
+                 (lang === "ru" ? "Системный журнал действий" : "Tizim harakatlari jurnali")}
+              </h1>
+            </div>
+
+            <div className="flex items-center gap-2 sm:gap-3 lg:gap-4 shrink-0">
+
               {/* Language toggle */}
               <div className="flex bg-slate-100 rounded-lg p-1 border border-slate-200">
                 <button 
@@ -1368,16 +1405,16 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
 
               <button 
                 onClick={() => setIsNewSaleOpen(true)}
-                className="bg-amber-400 hover:bg-amber-500 text-slate-900 px-4 py-2 rounded-lg font-bold text-sm shadow-sm hover:shadow active:scale-95 transition-all flex items-center gap-2 cursor-pointer border border-amber-300"
+                className="bg-amber-400 hover:bg-amber-500 text-slate-900 px-3 sm:px-4 py-2 rounded-lg font-bold text-sm shadow-sm hover:shadow active:scale-95 transition-all flex items-center gap-2 cursor-pointer border border-amber-300"
               >
-                <PlusCircle className="w-4 h-4" />
-                <span>{t.newSale}</span>
+                <PlusCircle className="w-4 h-4 shrink-0" />
+                <span className="hidden sm:inline">{t.newSale}</span>
               </button>
             </div>
           </header>
 
           {/* Core Content Area */}
-          <div className="p-8 flex-1 overflow-y-auto flex flex-col gap-8">
+          <div className="p-4 sm:p-6 lg:p-8 flex-1 overflow-y-auto flex flex-col gap-6 lg:gap-8">
             
             {/* 1. TAB: DASHBOARD */}
             {activeTab === "dashboard" && (
@@ -2063,7 +2100,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                   <div className="flex justify-between items-center border-b border-slate-100 pb-4">
                     <div>
                       <h3 className="font-bold text-slate-800 text-base flex items-center gap-2">
-                        <span>🥚</span>
+                        <Egg className="w-4.5 h-4.5 text-amber-500 shrink-0" />
                         <span>{lang === "ru" ? "Справочник видов яиц и цен" : "Tuxum turlari va narxlari katalogi"}</span>
                       </h3>
                       <p className="text-xs text-slate-400 mt-0.5">
@@ -2623,8 +2660,9 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                     />
                   </div>
 
-                  <div className="p-3 bg-blue-50 text-blue-800 border border-blue-100 rounded-lg text-[11px]">
-                    ⚠️ Внимание: баланс (долг) магазина будет автоматически скорректирован на величину разницы.
+                  <div className="p-3 bg-blue-50 text-blue-800 border border-blue-100 rounded-lg text-[11px] flex items-start gap-2">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" aria-hidden="true" />
+                    <span>Внимание: баланс (долг) магазина будет автоматически скорректирован на величину разницы.</span>
                   </div>
 
                   <div className="flex gap-3 mt-2">
@@ -2779,8 +2817,9 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                     {/* Similar points warning */}
                     {adminSimilarShops.length > 0 && (
                       <div className="bg-amber-50 border border-amber-200 text-slate-800 text-[11px] p-2.5 rounded-lg flex flex-col gap-1.5 mt-1">
-                        <p className="font-bold text-amber-800">
-                          {lang === "ru" ? "⚠️ Найдена похожая торговая точка:" : "⚠️ O'xshash do'kon topildi:"}
+                        <p className="font-bold text-amber-800 flex items-center gap-1.5">
+                          <AlertTriangle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                          {lang === "ru" ? "Найдена похожая торговая точка:" : "O'xshash do'kon topildi:"}
                         </p>
                         <div className="flex flex-col gap-1 max-h-[90px] overflow-y-auto">
                           {adminSimilarShops.map(s => (
@@ -2894,8 +2933,9 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                   </button>
                 </div>
                 <form onSubmit={handleMergeShops} className="p-6 flex flex-col gap-4">
-                  <div className="p-3.5 bg-amber-50 text-amber-800 border border-amber-100 rounded-lg text-xs leading-relaxed">
-                    💡 <strong>Как это работает:</strong> Все долги магазина-дубликата суммируются с основным магазином. Все исторические транзакции дубликата переносятся на основной магазин. Магазин-дубликат переименовывается и архивируется.
+                  <div className="p-3.5 bg-amber-50 text-amber-800 border border-amber-100 rounded-lg text-xs leading-relaxed flex items-start gap-2">
+                    <Lightbulb className="w-4 h-4 shrink-0 mt-px" aria-hidden="true" />
+                    <span><strong>Как это работает:</strong> Все долги магазина-дубликата суммируются с основным магазином. Все исторические транзакции дубликата переносятся на основной магазин. Магазин-дубликат переименовывается и архивируется.</span>
                   </div>
 
                   {/* Source Shop */}
@@ -2964,8 +3004,9 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
             const purchaseLogs = sortedShopLogs.filter(log => !log.isCancelled && (log.type === "sale" || log.paymentType === "debt" || log.message.toLowerCase().includes("продаж") || log.message.toLowerCase().includes("sotuv") || log.qty));
             const lastPurchase = purchaseLogs[0] || null;
 
-            // Extract last payment details
-            const paymentLogs = sortedShopLogs.filter(log => !log.isCancelled && (log.type === "payment" || log.paymentType !== "debt" || log.message.toLowerCase().includes("оплат") || log.message.toLowerCase().includes("to'lov")));
+            // Extract last payment details — только операции «Приём оплаты»
+            // (раньше сюда по paymentType !== "debt" попадали и продажи).
+            const paymentLogs = sortedShopLogs.filter(log => !log.isCancelled && log.type === "payment");
             const lastPayment = paymentLogs[0] || null;
 
             // Filter history list by dates
@@ -3196,9 +3237,9 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
               <div className="bg-white rounded-xl border border-slate-200 shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95">
                 <div className="bg-slate-900 p-5 text-white border-b border-slate-800 flex justify-between items-center">
                   <div className="flex items-center gap-2">
-                    <span className="text-xl">🥚</span>
+                    <Egg className="w-5 h-5 text-amber-400 shrink-0" />
                     <span className="font-bold tracking-tight text-base">
-                      {editingEgg 
+                      {editingEgg
                         ? (lang === "ru" ? "Редактировать сорт яиц" : "Tuxum turini tahrirlash") 
                         : (lang === "ru" ? "Добавить сорт яиц" : "Yangi tuxum turi qo'shish")}
                     </span>

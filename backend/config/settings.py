@@ -134,3 +134,21 @@ CORS_ALLOWED_ORIGINS = [
 # В режиме разработки удобнее разрешить любые origin (dev-фронт на разных портах).
 CORS_ALLOW_ALL_ORIGINS = env_bool("CORS_ALLOW_ALL", DEBUG)
 CORS_ALLOW_CREDENTIALS = True
+
+# --- Безопасность для продакшена (за HTTPS-прокси) -------------------------
+# Домены, которым доверяем для CSRF (нужно при DEBUG=False и работе через прокси),
+# напр. https://tuxumchick.example.com — список через запятую.
+CSRF_TRUSTED_ORIGINS = [
+    o.strip() for o in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",") if o.strip()
+]
+
+# Включается одним флагом DJANGO_SECURE_SSL=True, когда сайт отдаётся по HTTPS.
+# По умолчанию выключено — иначе локальный HTTP-запуск (docker compose) ломается.
+if env_bool("DJANGO_SECURE_SSL", False):
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    SECURE_SSL_REDIRECT = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = int(os.getenv("DJANGO_HSTS_SECONDS", "31536000"))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True

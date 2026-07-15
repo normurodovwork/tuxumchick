@@ -23,8 +23,12 @@ docker compose up --build
 ```
 - Фронтенд: http://localhost:3000
 - API / админка Django: http://localhost:8000/api, http://localhost:8000/admin/
-- Демо-вход: администратор `admin / admin123`, доставщик `jasur / 123`
-  (демо-данные грузятся автоматически при `SEED_DEMO=true`).
+- Первый администратор (демо-данные по умолчанию отключены, `SEED_DEMO=false`):
+  ```bash
+  docker compose exec backend python manage.py createsuperuser
+  ```
+  Либо для наполнения тестовыми данными задайте `SEED_DEMO=true` в `.env`
+  (создаст демо-аккаунты — только для разработки, не для продакшена).
 
 Остановить: `docker compose down` (данные БД сохраняются в томе `pgdata`;
 `docker compose down -v` — удалить и данные).

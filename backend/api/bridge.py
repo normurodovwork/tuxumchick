@@ -3,13 +3,39 @@
 который использует фронтенд (единая лента activityLogs). Позволяет фронтенду
 работать без изменения формы данных при переходе с Firestore на этот API.
 """
+from datetime import timedelta
 from decimal import Decimal
 
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
+from rest_framework.exceptions import PermissionDenied
 
 from catalog.models import Shop
 from operations.models import ActivityLog, Adjustment, Payment, Sale, SaleItem
+
+# Доставщик может исправлять/аннулировать операцию только в течение суток (ТЗ п.5).
+EDIT_WINDOW = timedelta(hours=24)
+
+
+def _is_admin(user) -> bool:
+    return bool(getattr(user, "is_admin", False) or getattr(user, "is_staff", False))
+
+
+def _guard_deliverer_edit(obj, owner, user):
+    """
+    Правило анти-махинаций (ТЗ п.5): доставщик может изменять/аннулировать
+    ТОЛЬКО свою операцию и ТОЛЬКО в течение 24 часов после создания.
+    Администратор — без ограничений. Проверка на сервере, а не только в UI.
+    """
+    if _is_admin(user):
+        return
+    if owner is None or owner.pk != getattr(user, "pk", None):
+        raise PermissionDenied("Можно изменять только свои операции.")
+    created = getattr(obj, "created_at", None)
+    if created is not None and timezone.now() - created > EDIT_WINDOW:
+        raise PermissionDenied(
+            "Прошло более 24 часов. Изменение возможно только через администратора."
+        )
 
 
 def num(x):
@@ -192,8 +218,11 @@ def create_operation(user, data):
         )
         return payment_to_log(p)
 
-    # Корректировка (± с причиной)
+    # Корректировка (± с причиной) — прямое изменение долга, только администратор
+    # (ТЗ п.3.2/5.1). Иначе доставщик мог бы менять долг магазина через API.
     if op_type == "adjustment" and shop is not None and isinstance(data.get("adjustmentAmount"), (int, float)):
+        if not _is_admin(user):
+            raise PermissionDenied("Корректировку долга может делать только администратор.")
         a = Adjustment.objects.create(
             shop=shop, operator=user,
             amount=Decimal(str(data.get("adjustmentAmount"))),
@@ -228,6 +257,7 @@ def update_operation(op_id, data, user):
         obj = Sale.objects.filter(pk=pk).first()
         if not obj:
             return None
+        _guard_deliverer_edit(obj, obj.deliverer, user)
         if "total" in data:
             obj.total = Decimal(str(data["total"]))
         apply_common(obj)
@@ -242,6 +272,7 @@ def update_operation(op_id, data, user):
         obj = Payment.objects.filter(pk=pk).first()
         if not obj:
             return None
+        _guard_deliverer_edit(obj, obj.operator, user)
         if "amount" in data:
             obj.amount = Decimal(str(data["amount"]))
         apply_common(obj)
@@ -256,6 +287,7 @@ def update_operation(op_id, data, user):
         obj = Adjustment.objects.filter(pk=pk).first()
         if not obj:
             return None
+        _guard_deliverer_edit(obj, obj.operator, user)
         apply_common(obj)
         if data.get("isCancelled"):
             obj.is_cancelled = True
@@ -266,6 +298,9 @@ def update_operation(op_id, data, user):
         obj = ActivityLog.objects.filter(pk=pk).first()
         if not obj:
             return None
+        # Записи журнала действий правит только администратор (целостность аудита).
+        if not _is_admin(user):
+            raise PermissionDenied("Журнал действий может изменять только администратор.")
         if "message" in data:
             obj.message = data.get("message") or obj.message
         obj.save()
