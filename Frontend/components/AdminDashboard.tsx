@@ -27,6 +27,11 @@ interface AdminDashboardProps {
 
 type AdminTab = "dashboard" | "deliverers" | "shops" | "operations" | "egg_types" | "reports" | "audit";
 
+// Блок «Склад: Остатки» на дашборде временно скрыт (модуль складского учёта
+// добавится позже как отдельная платная функция). Код и данные (inventory)
+// не удалены — верните true, когда модуль будет готов.
+const SHOW_WAREHOUSE_STOCKS = false;
+
 export default function AdminDashboard({ username, onLogout, lang, setLang }: AdminDashboardProps) {
   const t = translations[lang];
 
@@ -1602,7 +1607,8 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
 
                   {/* Sidebar stats & stocks */}
                   <div className="flex flex-col gap-6">
-                    {/* Warehouse stocks */}
+                    {/* Warehouse stocks — временно скрыто, см. SHOW_WAREHOUSE_STOCKS */}
+                    {SHOW_WAREHOUSE_STOCKS && (
                     <div className="bg-slate-900 text-white p-6 rounded-xl shadow-lg border border-slate-800">
                       <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 border-b border-slate-800 pb-2 flex justify-between items-center">
                         <span>{t.warehouseStocks}</span>
@@ -1640,6 +1646,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                         </div>
                       </div>
                     </div>
+                    )}
 
                     {/* Quick prices list */}
                     <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
