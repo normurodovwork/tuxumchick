@@ -71,6 +71,12 @@ def _operator_username(user):
     return (user.full_name or user.username) if user else ""
 
 
+def _operator_id(user):
+    # Стабильный идентификатор для фильтрации операций по доставщику
+    # (имя ненадёжно: пересечения имён давали дубли и ломали фильтр).
+    return str(user.pk) if user else ""
+
+
 # --------------------------- сериализация в лог ---------------------------
 
 def sale_to_log(s: Sale):
@@ -102,6 +108,7 @@ def sale_to_log(s: Sale):
         "paymentType": s.payment_method if s.received > 0 else "debt",
         "operator": _operator_label(s.deliverer),
         "operatorUsername": _operator_username(s.deliverer),
+        "operatorId": _operator_id(s.deliverer),
         "message": s.message,
         "isCancelled": s.is_cancelled,
         "isEdited": s.is_edited,
@@ -121,6 +128,7 @@ def payment_to_log(p: Payment):
         "comment": p.comment,
         "operator": _operator_label(p.operator),
         "operatorUsername": _operator_username(p.operator),
+        "operatorId": _operator_id(p.operator),
         "message": p.message,
         "isCancelled": p.is_cancelled,
         "isEdited": p.is_edited,
@@ -140,6 +148,7 @@ def adjustment_to_log(a: Adjustment):
         "reason": a.reason,
         "operator": _operator_label(a.operator),
         "operatorUsername": _operator_username(a.operator),
+        "operatorId": _operator_id(a.operator),
         "message": a.message,
         "isCancelled": a.is_cancelled,
     }
@@ -156,6 +165,7 @@ def activity_to_log(al: ActivityLog):
         "message": al.message,
         "operator": al.operator_label or _operator_label(al.user),
         "operatorUsername": _operator_username(al.user),
+        "operatorId": _operator_id(al.user),
         "action": al.action,
         "isCancelled": False,
     }

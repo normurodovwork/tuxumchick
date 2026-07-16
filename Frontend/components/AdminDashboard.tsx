@@ -70,6 +70,8 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
   const [opFilterType, setOpFilterType] = useState<"all" | "sale" | "payment">("all");
   const [opFilterOperator, setOpFilterOperator] = useState<string>("all");
   const [opSearchQuery, setOpSearchQuery] = useState("");
+  // Просмотр деталей операции по клику (П4)
+  const [viewOp, setViewOp] = useState<any>(null);
 
   // Configuration States (Settings Modal)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -952,7 +954,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
   // 4. По доставщику
   const reportByDeliverer = () => {
     const rows = deliverers.map(d => {
-      const dl = opsInPeriod().filter(l => !l.isCancelled && (l.operatorUsername === d.username || (l.operator || "").toLowerCase().includes(d.name.toLowerCase())));
+      const dl = opsInPeriod().filter(l => !l.isCancelled && String(l.operatorId ?? "") === String(d.id));
       const sold = dl.filter(l => l.type === "sale").reduce((s, l) => s + (l.total ?? l.amount ?? 0), 0);
       const collected = dl.reduce((s, l) => s + (l.type === "sale" ? (l.received || 0) : l.type === "payment" ? (l.amount || 0) : 0), 0);
       const toDebt = dl.filter(l => l.type === "sale").reduce((s, l) => s + ((l.total ?? l.amount ?? 0) - (l.received || 0)), 0);
@@ -1108,7 +1110,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
   const delivererSummary = useMemo(() => {
     return deliverers.map(d => {
       const dl = activityLogs.filter(l => !l.isCancelled && inDashRange(l) &&
-        (l.operatorUsername === d.username || (l.operator || "").toLowerCase().includes(d.name.toLowerCase())));
+        String(l.operatorId ?? "") === String(d.id));
       const sold = dl.filter(l => l.type === "sale").reduce((s, l) => s + (l.total ?? l.amount ?? 0), 0);
       const collected = dl.reduce((s, l) => s + (l.type === "sale" ? (l.received || 0) : l.type === "payment" ? (l.amount || 0) : 0), 0);
       return { id: d.id, name: d.name, status: d.status, sold, collected, count: dl.filter(l => l.type === "sale").length };
@@ -1194,8 +1196,8 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
         if (opFilterType === "payment" && log.type !== "payment") return false;
       }
 
-      // 3. Operator Match
-      if (opFilterOperator !== "all" && log.operator !== opFilterOperator) return false;
+      // 3. Operator Match — по стабильному id доставщика (П4/П5), не по имени
+      if (opFilterOperator !== "all" && String(log.operatorId ?? "") !== String(opFilterOperator)) return false;
 
       // 4. Period Match
       if (opFilterPeriod !== "all") {
@@ -1999,9 +2001,8 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                       >
                         <option value="all">Все сотрудники</option>
                         {deliverers.map(d => (
-                          <option key={d.id} value={d.name}>{d.name}</option>
+                          <option key={d.id} value={d.id}>{d.name}</option>
                         ))}
-                        <option value="Алишер К.">Алишер К. (Админ)</option>
                       </select>
                     </div>
 
@@ -2037,7 +2038,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                         {filteredOperations.map(log => {
                           const dateStr = log.timestamp ? new Date(log.timestamp).toLocaleString() : "—";
                           return (
-                            <tr key={log.id} className={`hover:bg-slate-50/50 transition-colors ${log.isCancelled ? "bg-slate-100 opacity-60" : ""}`}>
+                            <tr key={log.id} onClick={() => setViewOp(log)} className={`hover:bg-slate-50/50 transition-colors cursor-pointer ${log.isCancelled ? "bg-slate-100 opacity-60" : ""}`}>
                               <td className="px-6 py-3.5">
                                 <p className="font-mono text-xs font-bold text-slate-500 uppercase">#{log.id}</p>
                                 <p className="text-[10px] text-slate-400 font-mono mt-0.5">{dateStr}</p>
@@ -2073,8 +2074,9 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                               <td className="px-6 py-3.5 text-right">
                                 {!log.isCancelled ? (
                                   <div className="flex justify-end gap-2">
-                                    <button 
-                                      onClick={() => {
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
                                         if (confirm("Вы действительно хотите аннулировать и отменить эту операцию? Баланс долга магазина будет автоматически пересчитан.")) {
                                           handleAnnulLog(log);
                                         }
@@ -2084,8 +2086,8 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                                     >
                                       <Trash2 className="w-3.5 h-3.5 text-red-500" />
                                     </button>
-                                    <button 
-                                      onClick={() => handleOpenEditLog(log)}
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); handleOpenEditLog(log); }}
                                       className="p-1.5 hover:bg-slate-100 border border-slate-200 rounded text-slate-600 hover:text-slate-900 transition-colors cursor-pointer"
                                       title="Исправить сумму"
                                     >
@@ -2373,6 +2375,78 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
             )}
 
           </div>
+
+          {/* Modal: детали операции (П4 — клик по операции) */}
+          {viewOp && (
+            <div onClick={() => setViewOp(null)} className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in-50">
+              <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-xl border border-slate-200 shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 flex flex-col max-h-[90vh]">
+                <div className="bg-slate-900 text-white px-5 py-4 flex justify-between items-center">
+                  <div className="flex items-center gap-2">
+                    <BookOpen className="w-4 h-4 text-amber-400" />
+                    <span className="font-bold tracking-tight text-base">
+                      {viewOp.type === "payment" ? (lang === "ru" ? "Приём оплаты" : "To'lov") :
+                       viewOp.type === "sale" ? (lang === "ru" ? "Продажа" : "Sotuv") :
+                       viewOp.type === "adjustment" ? (lang === "ru" ? "Корректировка" : "Tuzatish") : (lang === "ru" ? "Операция" : "Amaliyot")}
+                    </span>
+                    <span className="font-mono text-[10px] text-slate-400">#{viewOp.id}</span>
+                  </div>
+                  <button onClick={() => setViewOp(null)} className="text-slate-400 hover:text-white cursor-pointer"><X className="w-5 h-5" /></button>
+                </div>
+                <div className="p-5 flex flex-col gap-3 overflow-y-auto text-sm">
+                  {viewOp.isCancelled && (
+                    <div className="bg-red-50 border border-red-100 text-red-700 rounded-lg px-3 py-2 text-xs font-bold uppercase tracking-wider">{lang === "ru" ? "Аннулировано" : "Bekor qilingan"}</div>
+                  )}
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                    <div><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "Магазин" : "Do'kon"}</p><p className="font-semibold text-slate-800">{viewOp.shopName || shopNameById(viewOp.shopId)}</p></div>
+                    <div><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "Доставщик" : "Yetkazuvchi"}</p><p className="font-semibold text-slate-800">{viewOp.operator || "—"}</p></div>
+                    <div><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "Дата и время" : "Sana va vaqt"}</p><p className="font-mono text-slate-800">{viewOp.timestamp ? new Date(viewOp.timestamp).toLocaleString() : "—"}</p></div>
+                    <div><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{t.paymentType}</p><p className="font-semibold text-slate-800">{viewOp.paymentType === "cash" ? t.cash : viewOp.paymentType === "card" ? t.card : viewOp.paymentType === "transfer" ? t.transfer : viewOp.paymentType === "debt" ? (lang === "ru" ? "В долг" : "Nasiya") : "—"}</p></div>
+                  </div>
+
+                  {/* Позиции продажи (что/сколько/по какой цене) */}
+                  {Array.isArray(viewOp.items) && viewOp.items.length > 0 && (
+                    <div className="border border-slate-200 rounded-lg overflow-hidden mt-1">
+                      <table className="w-full text-xs">
+                        <thead className="bg-slate-50 text-slate-400 uppercase tracking-wider text-[9px]">
+                          <tr>
+                            <th className="text-left px-3 py-2">{lang === "ru" ? "Категория" : "Kategoriya"}</th>
+                            <th className="text-right px-3 py-2">{lang === "ru" ? "Кол-во" : "Soni"}</th>
+                            <th className="text-right px-3 py-2">{lang === "ru" ? "Цена/лоток" : "Narx/lagan"}</th>
+                            <th className="text-right px-3 py-2">{lang === "ru" ? "Сумма" : "Summa"}</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 font-mono">
+                          {viewOp.items.map((it: any, i: number) => (
+                            <tr key={i}>
+                              <td className="px-3 py-2 font-sans font-medium text-slate-700">{lang === "ru" ? it.nameRu : (it.nameUz || it.nameRu)}</td>
+                              <td className="px-3 py-2 text-right">{it.qty} {it.qtyType === "boxes" ? (lang === "ru" ? "кор." : "quti") : (lang === "ru" ? "лотк." : "lagan")}</td>
+                              <td className="px-3 py-2 text-right">{(it.pricePerTray || 0).toLocaleString()}</td>
+                              <td className="px-3 py-2 text-right font-bold text-slate-900">{(it.lineTotal || 0).toLocaleString()}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* Итоги */}
+                  <div className="flex flex-col gap-1.5 mt-1 border-t border-slate-100 pt-3">
+                    {viewOp.type === "sale" ? (
+                      <>
+                        <div className="flex justify-between"><span className="text-slate-500">{lang === "ru" ? "Итого" : "Jami"}</span><span className="font-mono font-bold text-slate-900">{formatSum(viewOp.total ?? viewOp.amount ?? 0, lang)}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">{lang === "ru" ? "Получено" : "Qabul qilindi"}</span><span className="font-mono font-bold text-emerald-600">{formatSum(viewOp.received ?? 0, lang)}</span></div>
+                        <div className="flex justify-between"><span className="text-slate-500">{lang === "ru" ? "В долг" : "Nasiya"}</span><span className="font-mono font-bold text-red-600">{formatSum((viewOp.total ?? 0) - (viewOp.received ?? 0), lang)}</span></div>
+                      </>
+                    ) : (
+                      <div className="flex justify-between"><span className="text-slate-500">{lang === "ru" ? "Сумма" : "Summa"}</span><span className="font-mono font-bold text-slate-900">{formatSum(viewOp.amount ?? 0, lang)}</span></div>
+                    )}
+                  </div>
+
+                  {viewOp.message && <p className="text-[11px] text-slate-400 mt-1 border-t border-slate-100 pt-2">{viewOp.message}</p>}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Modal: Settings Dialog */}
           {isSettingsOpen && (

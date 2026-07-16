@@ -140,11 +140,12 @@ export default function Home() {
   }
 
   return (
-    <DelivererDashboard 
-      username={user.name} 
-      onLogout={handleLogout} 
-      lang={lang} 
-      setLang={handleSetLang} 
+    <DelivererDashboard
+      username={user.name}
+      userId={user.id}
+      onLogout={handleLogout}
+      lang={lang}
+      setLang={handleSetLang}
     />
   );
 }

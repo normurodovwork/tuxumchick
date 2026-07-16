@@ -16,12 +16,13 @@ import { translations, Language } from "../lib/translations";
 
 interface DelivererDashboardProps {
   username: string;
+  userId?: string;
   onLogout: () => void;
   lang: Language;
   setLang: (lang: Language) => void;
 }
 
-export default function DelivererDashboard({ username, onLogout, lang, setLang }: DelivererDashboardProps) {
+export default function DelivererDashboard({ username, userId, onLogout, lang, setLang }: DelivererDashboardProps) {
   const t = translations[lang];
 
   // States
@@ -572,9 +573,12 @@ export default function DelivererDashboard({ username, onLogout, lang, setLang }
 
   // Filtered My Operations for the Selected Period
   const filteredMyOperations = useMemo(() => {
-    const myLogs = activityLogs.filter(log => 
-      log.operatorUsername === username || 
-      (log.operator && log.operator.toLowerCase().includes(username.toLowerCase()))
+    // Только свои операции — по стабильному id (имя ненадёжно: пересечения имён
+    // давали чужие операции). Fallback по имени — для логов без operatorId.
+    const myLogs = activityLogs.filter(log =>
+      userId && log.operatorId != null && String(log.operatorId) !== ""
+        ? String(log.operatorId) === String(userId)
+        : (log.operatorUsername === username)
     );
     if (journalPeriod === "all") return myLogs;
 
