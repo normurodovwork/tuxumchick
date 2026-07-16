@@ -75,7 +75,7 @@ export default function DelivererDashboard({ username, onLogout, lang, setLang }
   
   // Payment input
   const [collectAmount, setCollectAmount] = useState(0);
-  const [collectType, setCollectType] = useState<"cash" | "card">("cash");
+  const [collectType, setCollectType] = useState<"cash" | "card" | "transfer">("cash");
   const [collectComment, setCollectComment] = useState("");
 
   // Sale input (multi-line items per ТЗ п.4.4)
@@ -84,7 +84,7 @@ export default function DelivererDashboard({ username, onLogout, lang, setLang }
     { eggType: "c0", qtyType: "boxes", qty: 0 },
   ]);
   const [saleReceived, setSaleReceived] = useState(0);
-  const [salePayMethod, setSalePayMethod] = useState<"cash" | "card">("cash");
+  const [salePayMethod, setSalePayMethod] = useState<"cash" | "card" | "transfer">("cash");
   const [saleDate, setSaleDate] = useState<string>(todayISO);
 
   // Confirmation screen after a saved operation (ТЗ п.4.4 шаг 6 / п.6)
@@ -258,9 +258,11 @@ export default function DelivererDashboard({ username, onLogout, lang, setLang }
       // Overpayment becomes переплата/аванс (negative debt), never lost (ТЗ п.4.5/5.2).
       const newDebt = shop.debt - collectAmount;
 
+      const payLabelRu = collectType === "cash" ? "Наличные" : collectType === "transfer" ? "Перечисление" : "Клик";
+      const payLabelUz = collectType === "cash" ? "Naqd" : collectType === "transfer" ? "O'tkazma" : "Klik";
       const paymentMsg = lang === "ru"
-        ? `Приём оплаты: ${shop.name} | ${formatSum(collectAmount, "ru")} (${collectType === "cash" ? "Наличные" : "Карта"})${collectComment ? ` — ${collectComment}` : ""}`
-        : `To'lov qabul qilish: ${shop.name} | ${formatSum(collectAmount, "uz")} (${collectType === "cash" ? "Naqd" : "Karta"})${collectComment ? ` — ${collectComment}` : ""}`;
+        ? `Приём оплаты: ${shop.name} | ${formatSum(collectAmount, "ru")} (${payLabelRu})${collectComment ? ` — ${collectComment}` : ""}`
+        : `To'lov qabul qilish: ${shop.name} | ${formatSum(collectAmount, "uz")} (${payLabelUz})${collectComment ? ` — ${collectComment}` : ""}`;
 
       await addActivityLog({
         timestamp: new Date().toISOString(),
@@ -282,7 +284,7 @@ export default function DelivererDashboard({ username, onLogout, lang, setLang }
         newDebt,
         lines: [
           { label: lang === "ru" ? "Получено" : "Qabul qilindi", value: formatSum(collectAmount, lang), strong: true },
-          { label: lang === "ru" ? "Способ" : "Usul", value: collectType === "cash" ? t.cash : t.card },
+          { label: lang === "ru" ? "Способ" : "Usul", value: collectType === "cash" ? t.cash : collectType === "transfer" ? t.transfer : t.card },
         ],
       });
       setCollectAmount(0);
@@ -1064,29 +1066,21 @@ export default function DelivererDashboard({ username, onLogout, lang, setLang }
                   {/* Payment Category */}
                   <div className="flex flex-col gap-1.5">
                     <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{t.paymentType}</label>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setCollectType("cash")}
-                        className={`py-2 rounded-lg border text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
-                          collectType === "cash" 
-                            ? "bg-slate-900 border-slate-800 text-amber-400" 
-                            : "bg-white border-slate-200 text-slate-600"
-                        }`}
-                      >
-                        {t.cash}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setCollectType("card")}
-                        className={`py-2 rounded-lg border text-xs font-bold uppercase tracking-wider transition-all cursor-pointer ${
-                          collectType === "card" 
-                            ? "bg-slate-900 border-slate-800 text-amber-400" 
-                            : "bg-white border-slate-200 text-slate-600"
-                        }`}
-                      >
-                        {t.card}
-                      </button>
+                    <div className="grid grid-cols-3 gap-2">
+                      {([["cash", t.cash], ["card", t.card], ["transfer", t.transfer]] as const).map(([id, label]) => (
+                        <button
+                          key={id}
+                          type="button"
+                          onClick={() => setCollectType(id)}
+                          className={`py-2 rounded-lg border text-[11px] font-bold uppercase tracking-wider transition-all cursor-pointer ${
+                            collectType === id
+                              ? "bg-slate-900 border-slate-800 text-amber-400"
+                              : "bg-white border-slate-200 text-slate-600"
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
                     </div>
                   </div>
 
@@ -1399,8 +1393,8 @@ export default function DelivererDashboard({ username, onLogout, lang, setLang }
                   {saleReceived > 0 && (
                     <div className="flex flex-col gap-1.5">
                       <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{t.paymentType}</label>
-                      <div className="grid grid-cols-2 gap-1.5">
-                        {[{ id: "cash", label: t.cash }, { id: "card", label: t.card }].map(m => (
+                      <div className="grid grid-cols-3 gap-1.5">
+                        {[{ id: "cash", label: t.cash }, { id: "card", label: t.card }, { id: "transfer", label: t.transfer }].map(m => (
                           <button key={m.id} type="button" onClick={() => setSalePayMethod(m.id as any)}
                             className={`py-1.5 rounded-md border text-[9px] font-bold uppercase tracking-wider transition-all cursor-pointer ${salePayMethod === m.id ? "bg-slate-900 border-slate-800 text-amber-400" : "bg-white border-slate-200 text-slate-600"}`}>
                             {m.label}

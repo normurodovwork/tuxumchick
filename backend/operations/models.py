@@ -9,7 +9,8 @@ from catalog.models import EggType, Shop
 
 class PaymentMethod(models.TextChoices):
     CASH = "cash", "Наличные"
-    CARD = "card", "Карта / Перевод"
+    CARD = "card", "Клик / Карта"
+    TRANSFER = "transfer", "Перечисление"
 
 
 class CancellableQuerySet(models.QuerySet):

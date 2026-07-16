@@ -89,7 +89,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
   const [saleEggType, setSaleEggType] = useState<string>("c0");
   const [saleQtyType, setSaleQtyType] = useState<"boxes" | "trays">("boxes");
   const [saleQty, setSaleQty] = useState(0);
-  const [salePayment, setSalePayment] = useState<"cash" | "card" | "debt">("debt");
+  const [salePayment, setSalePayment] = useState<"cash" | "card" | "transfer" | "debt">("debt");
 
   // Admin Override States (Modals/Overlays)
   // Edit Log Amount Modal
@@ -1060,6 +1060,13 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
     let salesSum = 0;       // продажи за период (итого)
     let cashCollectedSum = 0; // получено денег: при продажах + приёмы оплаты
     let givenToDebt = 0;    // отдано в долг за период
+    // Раздельный подсчёт по видам оплаты (П1): наличные / клик / перечисление.
+    let byCash = 0, byCard = 0, byTransfer = 0;
+    const addByType = (pt: string, amt: number) => {
+      if (pt === "card") byCard += amt;
+      else if (pt === "transfer") byTransfer += amt;
+      else byCash += amt;
+    };
 
     shops.forEach(shop => {
       if (shop.isArchived) return;
@@ -1071,11 +1078,15 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
       if (log.isCancelled || !inDashRange(log)) return;
       if (log.type === "sale") {
         salesSum += (log.total ?? log.amount ?? 0);
-        cashCollectedSum += (log.received || 0);
-        givenToDebt += ((log.total ?? log.amount ?? 0) - (log.received || 0));
+        const rec = log.received || 0;
+        cashCollectedSum += rec;
+        if (rec > 0) addByType(log.paymentType, rec);
+        givenToDebt += ((log.total ?? log.amount ?? 0) - rec);
       } else if (log.type === "payment") {
-        cashCollectedSum += (log.amount || 0);
-        givenToDebt -= (log.amount || 0);
+        const amt = log.amount || 0;
+        cashCollectedSum += amt;
+        addByType(log.paymentType, amt);
+        givenToDebt -= amt;
       } else if (log.type === "adjustment" && typeof log.adjustmentAmount === "number") {
         givenToDebt += log.adjustmentAmount;
       }
@@ -1086,6 +1097,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
       totalAdvance,
       salesToday: salesSum,
       cashCollected: cashCollectedSum,
+      byCash, byCard, byTransfer,
       givenToDebt,
       activeDeliverersCount: deliverers.filter(d => d.status === "online").length,
       totalDeliverersCount: deliverers.length,
@@ -1472,9 +1484,12 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                         {formatSum(stats.cashCollected, lang)}
                       </p>
                     </div>
-                    <p className="text-[10px] text-slate-500 mt-2">
-                      {lang === "ru" ? "При продажах + приёмы оплаты" : "Sotuv + to'lovlar"}
-                    </p>
+                    {/* Раздельно по видам оплаты (П1) */}
+                    <div className="mt-2 flex flex-col gap-0.5 text-[10px] font-medium">
+                      <div className="flex justify-between"><span className="text-slate-500">{t.cash}</span><span className="font-mono font-bold text-slate-700">{formatSum(stats.byCash, lang)}</span></div>
+                      <div className="flex justify-between"><span className="text-slate-500">{t.card}</span><span className="font-mono font-bold text-slate-700">{formatSum(stats.byCard, lang)}</span></div>
+                      <div className="flex justify-between"><span className="text-slate-500">{t.transfer}</span><span className="font-mono font-bold text-slate-700">{formatSum(stats.byTransfer, lang)}</span></div>
+                    </div>
                   </div>
 
                   <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between hover:border-slate-300 transition-colors">
@@ -2595,8 +2610,8 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                         {saleReceived > 0 && (
                           <div className="flex flex-col gap-1.5">
                             <label className="text-xs font-bold uppercase tracking-wider text-slate-400">{t.paymentType}</label>
-                            <div className="grid grid-cols-2 gap-2">
-                              {[{ id: "cash", label: t.cash }, { id: "card", label: t.card }].map(m => (
+                            <div className="grid grid-cols-3 gap-2">
+                              {[{ id: "cash", label: t.cash }, { id: "card", label: t.card }, { id: "transfer", label: t.transfer }].map(m => (
                                 <button key={m.id} type="button" onClick={() => setSalePayment(m.id as any)}
                                   className={`py-2 rounded-lg border text-[10px] font-bold uppercase tracking-wider transition-all cursor-pointer ${salePayment === m.id ? "bg-slate-900 border-slate-800 text-amber-400 shadow-sm" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
                                   {m.label}

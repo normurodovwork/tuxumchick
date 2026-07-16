@@ -191,7 +191,7 @@ def create_operation(user, data):
             operation_date=parse_dt(data.get("operationDate")),
             total=Decimal(str(data.get("total", 0))),
             received=Decimal(str(data.get("received", 0))),
-            payment_method=data.get("paymentType") if data.get("paymentType") in ("cash", "card") else "cash",
+            payment_method=data.get("paymentType") if data.get("paymentType") in ("cash", "card", "transfer") else "cash",
             comment=data.get("comment", "") or "",
             message=data.get("message", "") or "",
         )
@@ -212,7 +212,7 @@ def create_operation(user, data):
             shop=shop, operator=user,
             operation_date=parse_dt(data.get("operationDate")),
             amount=Decimal(str(data.get("amount", 0))),
-            payment_method=data.get("paymentType") if data.get("paymentType") in ("cash", "card") else "cash",
+            payment_method=data.get("paymentType") if data.get("paymentType") in ("cash", "card", "transfer") else "cash",
             comment=data.get("comment", "") or "",
             message=data.get("message", "") or "",
         )
