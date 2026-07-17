@@ -7,7 +7,7 @@ import {
   Edit2, Save, X, PlusCircle, Check, Loader2, Trash2, Shield, 
   Eye, EyeOff, FileSpreadsheet, Archive, Ban, BookOpen, UserPlus, 
   FileText, CheckSquare, Plus, RefreshCw, Building2, History, Edit,
-  LayoutDashboard, Store, Egg, ShieldCheck, Lightbulb, Menu
+  LayoutDashboard, Store, Egg, ShieldCheck, Lightbulb, Menu, Navigation
 } from "lucide-react";
 import {
   loadSettings, saveSettings, loadInventory, saveInventory,
@@ -17,6 +17,7 @@ import {
   applyComputedDebts, formatSum, ledgerDelta
 } from "../lib/db-service";
 import { translations, Language } from "../lib/translations";
+import LocationField, { yandexRouteUrl } from "./LocationField";
 
 interface AdminDashboardProps {
   username: string;
@@ -121,6 +122,8 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
   const [shopCardAddress, setShopCardAddress] = useState("");
   const [shopCardNote, setShopCardNote] = useState("");
   const [shopCardStatus, setShopCardStatus] = useState<"active" | "archive">("active");
+  const [shopCardLat, setShopCardLat] = useState<number | null>(null);
+  const [shopCardLng, setShopCardLng] = useState<number | null>(null);
 
   // Shop Profile view states
   const [selectedShopProfileId, setSelectedShopProfileId] = useState<string | null>(null);
@@ -550,6 +553,8 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
       setShopCardDebt(shop.openingDebt ?? 0);
       setShopCardAddress(shop.address || "");
       setShopCardNote(shop.note || "");
+      setShopCardLat(shop.lat ?? null);
+      setShopCardLng(shop.lng ?? null);
       setShopCardStatus(shop.isArchived ? "archive" : "active");
     } else {
       setShopCardName("");
@@ -558,6 +563,8 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
       setShopCardDebt(0);
       setShopCardAddress("");
       setShopCardNote("");
+      setShopCardLat(null);
+      setShopCardLng(null);
       setShopCardStatus("active");
     }
     setIsShopModalOpen(true);
@@ -583,6 +590,8 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
         debt: Number(shopCardDebt),
         address: shopCardAddress,
         note: shopCardNote,
+        lat: shopCardLat,
+        lng: shopCardLng,
         isArchived: shopCardStatus === "archive"
       };
 
@@ -1924,7 +1933,16 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                               </td>
                               <td className="px-6 py-3.5 text-right">
                                 <div className="flex justify-end gap-2">
-                                  <button 
+                                  {yandexRouteUrl(shop.lat, shop.lng) && (
+                                    <a
+                                      href={yandexRouteUrl(shop.lat, shop.lng)!} target="_blank" rel="noopener noreferrer"
+                                      className="p-1.5 hover:bg-amber-100 border border-amber-200 bg-amber-50 rounded text-amber-700 transition-colors cursor-pointer"
+                                      title={lang === "ru" ? "Маршрут (Яндекс.Карты)" : "Marshrut (Yandex)"}
+                                    >
+                                      <Navigation className="w-3.5 h-3.5" />
+                                    </a>
+                                  )}
+                                  <button
                                     onClick={() => setSelectedShopProfileId(shop.id)}
                                     className="p-1.5 hover:bg-slate-100 border border-slate-200 rounded text-slate-600 hover:text-slate-900 transition-colors cursor-pointer"
                                     title="Профиль и история"
@@ -3056,6 +3074,8 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                       className="w-full px-3.5 py-2 rounded-lg border border-slate-200 text-sm font-medium focus:outline-none focus:border-amber-400"
                     />
                   </div>
+
+                  <LocationField lat={shopCardLat} lng={shopCardLng} onChange={(la, ln) => { setShopCardLat(la); setShopCardLng(ln); }} lang={lang} />
 
                   <div className="flex flex-col gap-1.5">
                     <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Заметка (свободный текст)</label>

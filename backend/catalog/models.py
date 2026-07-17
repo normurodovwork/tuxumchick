@@ -128,6 +128,9 @@ class Shop(models.Model):
     phone = models.CharField("Телефон", max_length=32, blank=True)
     address = models.CharField("Адрес / ориентир", max_length=300, blank=True)
     note = models.TextField("Заметка", blank=True)
+    # Координаты локации (для карты и построения маршрута через Яндекс.Карты).
+    latitude = models.DecimalField("Широта", max_digits=9, decimal_places=6, null=True, blank=True)
+    longitude = models.DecimalField("Долгота", max_digits=9, decimal_places=6, null=True, blank=True)
     is_archived = models.BooleanField("В архиве", default=False)
 
     opening_debt = models.DecimalField("Начальный долг", max_digits=14, decimal_places=2, default=Decimal("0"))

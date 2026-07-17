@@ -13,6 +13,7 @@ import {
   loadEggTypes, applyComputedDebts, formatSum
 } from "../lib/db-service";
 import { translations, Language } from "../lib/translations";
+import LocationField, { yandexRouteUrl } from "./LocationField";
 
 interface DelivererDashboardProps {
   username: string;
@@ -65,6 +66,8 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
   const [newShopContact, setNewShopContact] = useState("");
   const [newShopPhone, setNewShopPhone] = useState("");
   const [newShopDebt, setNewShopDebt] = useState(0);
+  const [newShopLat, setNewShopLat] = useState<number | null>(null);
+  const [newShopLng, setNewShopLng] = useState<number | null>(null);
   const [creatingShop, setCreatingShop] = useState(false);
 
   // Forms
@@ -207,12 +210,14 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
         lastPaymentDate: null,
         address: newShopAddress.trim(),
         note: newShopNote.trim(),
+        lat: newShopLat,
+        lng: newShopLng,
         isArchived: false,
       };
 
       await saveShop(newShop);
       showToast(lang === "ru" ? "Магазин успешно создан!" : "Do'kon muvaffaqiyatli yaratildi!", "success");
-      
+
       // Reset form
       setNewShopName("");
       setNewShopContact("");
@@ -220,6 +225,8 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
       setNewShopDebt(0);
       setNewShopAddress("");
       setNewShopNote("");
+      setNewShopLat(null);
+      setNewShopLng(null);
       setIsCreateShopOpen(false);
 
       // Log creation
@@ -1543,6 +1550,9 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
                     />
                   </div>
 
+                  {/* Локация (карта + маршрут) */}
+                  <LocationField lat={newShopLat} lng={newShopLng} onChange={(la, ln) => { setNewShopLat(la); setNewShopLng(ln); }} lang={lang} />
+
                   {/* Note */}
                   <div className="flex flex-col gap-1.5">
                     <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
@@ -1671,6 +1681,16 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
                         <p className="text-slate-400 font-medium">{lang === "ru" ? "Адрес / ориентир" : "Manzil / mo'ljal"}</p>
                         <p className="font-semibold text-slate-700">{shop.address || "—"}</p>
                       </div>
+
+                      {yandexRouteUrl(shop.lat, shop.lng) && (
+                        <a
+                          href={yandexRouteUrl(shop.lat, shop.lng)!} target="_blank" rel="noopener noreferrer"
+                          className="flex items-center justify-center gap-2 py-2.5 rounded-lg bg-amber-400 hover:bg-amber-500 text-slate-900 font-bold text-xs transition-all cursor-pointer border border-amber-300"
+                        >
+                          <MapPin className="w-4 h-4" />
+                          {lang === "ru" ? "Построить маршрут (Яндекс.Карты)" : "Marshrut qurish (Yandex)"}
+                        </a>
+                      )}
 
                       <div className="text-xs">
                         <p className="text-slate-400 font-medium">{lang === "ru" ? "Заметка" : "Eslatma"}</p>

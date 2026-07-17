@@ -97,6 +97,8 @@ def shop_dict(s: Shop):
         "isArchived": s.is_archived,
         "openingDebt": num(s.opening_debt),
         "debt": num(s.current_debt),
+        "lat": float(s.latitude) if s.latitude is not None else None,
+        "lng": float(s.longitude) if s.longitude is not None else None,
     }
 
 
@@ -114,6 +116,16 @@ def shops(request):
         "note": d.get("note", "") or "",
         "is_archived": bool(d.get("isArchived", False)),
     }
+    # Координаты локации (могут задавать и доставщики при создании точки).
+    def _coord(v):
+        try:
+            return Decimal(str(v)) if v is not None and str(v) != "" else None
+        except Exception:
+            return None
+    if "lat" in d:
+        fields["latitude"] = _coord(d.get("lat"))
+    if "lng" in d:
+        fields["longitude"] = _coord(d.get("lng"))
     # Начальный долг: не-админ может задать его только при СОЗДАНИИ новой точки.
     # Менять opening_debt существующего магазина (обход «долг руками не править»,
     # ТЗ п.5.1) вправе только администратор.
