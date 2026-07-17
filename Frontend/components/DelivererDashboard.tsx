@@ -1020,15 +1020,19 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
                               <span className={`px-2 py-0.5 text-[8px] font-bold uppercase rounded-md tracking-wider ${
                                 log.isCancelled
                                   ? "bg-slate-200 text-slate-600"
-                                  : log.type === "payment" && !log.qty
-                                    ? "bg-emerald-100 text-emerald-800"
-                                    : "bg-amber-100 text-amber-800"
+                                  : log.type === "return"
+                                    ? "bg-orange-100 text-orange-800"
+                                    : log.type === "payment" && !log.qty
+                                      ? "bg-emerald-100 text-emerald-800"
+                                      : "bg-amber-100 text-amber-800"
                               }`}>
-                                {log.isCancelled 
+                                {log.isCancelled
                                   ? (lang === "ru" ? "Отменено" : "Bekor qilingan")
-                                  : log.type === "payment" && !log.qty
-                                    ? (lang === "ru" ? "Оплата" : "To'lov")
-                                    : (lang === "ru" ? "Продажа" : "Sotuv")}
+                                  : log.type === "return"
+                                    ? (lang === "ru" ? "Возврат" : "Qaytarish")
+                                    : log.type === "payment" && !log.qty
+                                      ? (lang === "ru" ? "Оплата" : "To'lov")
+                                      : (lang === "ru" ? "Продажа" : "Sotuv")}
                               </span>
 
                               {log.isEdited && (
@@ -1053,7 +1057,7 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
 
                           <div className="text-right flex flex-col items-end gap-1 shrink-0">
                             <span className="font-mono font-bold text-xs text-slate-900">
-                              {log.amount?.toLocaleString()} сум
+                              {log.type === "return" ? `${log.qtyPieces ?? 0} ${lang === "ru" ? "шт" : "dona"}` : `${log.amount?.toLocaleString()} сум`}
                             </span>
 
                             {/* Action Buttons: Edit & Cancel (within 24 hrs) */}
@@ -1956,15 +1960,19 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
                                     <span className={`px-1.5 py-0.2 text-[8px] font-extrabold uppercase rounded-md ${
                                       log.isCancelled
                                         ? "bg-slate-200 text-slate-600"
-                                        : log.type === "payment" && !log.qty
-                                          ? "bg-emerald-100 text-emerald-800"
-                                          : "bg-amber-100 text-amber-800"
+                                        : log.type === "return"
+                                          ? "bg-orange-100 text-orange-800"
+                                          : log.type === "payment" && !log.qty
+                                            ? "bg-emerald-100 text-emerald-800"
+                                            : "bg-amber-100 text-amber-800"
                                     }`}>
-                                      {log.isCancelled 
+                                      {log.isCancelled
                                         ? (lang === "ru" ? "Отмена" : "Bekor")
-                                        : log.type === "payment" && !log.qty
-                                          ? (lang === "ru" ? "Оплата" : "To'lov")
-                                          : (lang === "ru" ? "Продажа" : "Sotuv")}
+                                        : log.type === "return"
+                                          ? (lang === "ru" ? "Возврат" : "Qaytarish")
+                                          : log.type === "payment" && !log.qty
+                                            ? (lang === "ru" ? "Оплата" : "To'lov")
+                                            : (lang === "ru" ? "Продажа" : "Sotuv")}
                                     </span>
                                     <span className="text-[9px] text-slate-400 font-mono">
                                       {date} {time}
@@ -1976,7 +1984,7 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
                                 </div>
                                 <div className="text-right shrink-0 ml-2">
                                   <span className="font-mono font-bold text-slate-800">
-                                    {log.amount?.toLocaleString()} сум
+                                    {log.type === "return" ? `${log.qtyPieces ?? 0} ${lang === "ru" ? "шт" : "dona"}` : `${log.amount?.toLocaleString()} сум`}
                                   </span>
                                 </div>
                               </div>

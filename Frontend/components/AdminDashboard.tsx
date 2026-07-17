@@ -3470,15 +3470,19 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                                     <span className={`px-1.5 py-0.2 text-[8px] font-extrabold uppercase rounded-md ${
                                       log.isCancelled
                                         ? "bg-slate-200 text-slate-600"
-                                        : log.type === "payment" && !log.qty
-                                          ? "bg-emerald-100 text-emerald-800"
-                                          : "bg-amber-100 text-amber-800"
+                                        : log.type === "return"
+                                          ? "bg-orange-100 text-orange-800"
+                                          : log.type === "payment" && !log.qty
+                                            ? "bg-emerald-100 text-emerald-800"
+                                            : "bg-amber-100 text-amber-800"
                                     }`}>
-                                      {log.isCancelled 
+                                      {log.isCancelled
                                         ? "Отмена"
-                                        : log.type === "payment" && !log.qty
-                                          ? "Оплата"
-                                          : "Продажа"}
+                                        : log.type === "return"
+                                          ? "Возврат"
+                                          : log.type === "payment" && !log.qty
+                                            ? "Оплата"
+                                            : "Продажа"}
                                     </span>
                                     <span className="text-[9px] text-slate-400 font-mono">
                                       {date} {time}
@@ -3495,7 +3499,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                                 </div>
                                 <div className="text-right shrink-0 ml-2">
                                   <span className="font-mono font-bold text-slate-800">
-                                    {log.amount?.toLocaleString()} сум
+                                    {log.type === "return" ? `${log.qtyPieces ?? 0} шт` : `${log.amount?.toLocaleString()} сум`}
                                   </span>
                                 </div>
                               </div>
