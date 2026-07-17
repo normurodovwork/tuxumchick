@@ -926,6 +926,76 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
       rows);
   };
 
+  // Отчёт в формате заказчика (колонки как в присланном Excel):
+  // SHAFYOR·SANA·DOKON NOMI·KATEGORIYA·POCHKA·DONA·SINIQ·NARX·SUMMA·NAXT·QARZ·KLIK·PERECHESLENIYA·ESKIQARZ
+  const reportCustomerFormat = () => {
+    const eggsPerTray = settings?.eggsPerTray || 30;
+    const start = reportStart ? new Date(reportStart + "T00:00:00") : null;
+    const end = reportEnd ? new Date(reportEnd + "T23:59:59") : null;
+    const inRange = (l: any) => {
+      const when = l.operationDate || l.timestamp;
+      if (!when) return false;
+      const d = new Date(when);
+      if (start && d < start) return false;
+      if (end && d > end) return false;
+      return true;
+    };
+    const logs = activityLogs
+      .filter(l => !l.isCancelled && inRange(l) && (l.type === "sale" || l.type === "payment" || l.type === "return"))
+      .sort((a, b) => new Date(a.operationDate || a.timestamp).getTime() - new Date(b.operationDate || b.timestamp).getTime());
+
+    const dateStr = (l: any) => new Date(l.operationDate || l.timestamp).toLocaleDateString("ru-RU");
+    const pay = (pt: string, amt: number) => ({
+      naxt: pt === "cash" ? amt : "",
+      klik: pt === "card" ? amt : "",
+      perech: pt === "transfer" ? amt : "",
+    });
+
+    const rows: (string | number)[][] = [];
+    for (const l of logs) {
+      const shop = shops.find(s => s.id === l.shopId);
+      const eski = shop ? Math.round(shop.openingDebt || 0) : "";
+      const dokon = l.shopName || shopNameById(l.shopId);
+      if (l.type === "sale") {
+        const items = Array.isArray(l.items) ? l.items : [];
+        if (items.length === 0) {
+          const pc = pay(l.paymentType, Math.round(l.received || 0));
+          rows.push([l.operator || "", dateStr(l), dokon, "", "", "", "", "", Math.round(l.total || 0), pc.naxt, Math.round((l.total || 0) - (l.received || 0)), pc.klik, pc.perech, eski]);
+        }
+        items.forEach((it: any, idx: number) => {
+          const trays = it.trays || 0;
+          const first = idx === 0;
+          const pc = first ? pay(l.paymentType, Math.round(l.received || 0)) : { naxt: "", klik: "", perech: "" };
+          rows.push([
+            l.operator || "",                                  // SHAFYOR
+            dateStr(l),                                        // SANA
+            dokon,                                             // DOKON NOMI
+            lang === "ru" ? it.nameRu : (it.nameUz || it.nameRu), // KATEGORIYA
+            Math.round(trays),                                 // POCHKA (лотки)
+            Math.round(trays * eggsPerTray),                   // DONA (штуки)
+            "",                                               // SINIQ
+            Math.round(it.pricePerTray || 0),                  // NARX
+            Math.round(it.lineTotal || 0),                     // SUMMA
+            pc.naxt,                                           // NAXT
+            first ? Math.round((l.total || 0) - (l.received || 0)) : "", // QARZ
+            pc.klik,                                            // KLIK
+            pc.perech,                                          // PERECHESLENIYA
+            first ? eski : "",                                 // ESKIQARZ
+          ]);
+        });
+      } else if (l.type === "payment") {
+        const pc = pay(l.paymentType, Math.round(l.amount || 0));
+        rows.push([l.operator || "", dateStr(l), dokon, "", "", "", "", "", "", pc.naxt, "", pc.klik, pc.perech, eski]);
+      } else if (l.type === "return") {
+        rows.push([l.operator || "", dateStr(l), dokon, lang === "ru" ? l.eggNameRu : (l.eggNameUz || l.eggNameRu), "", "", l.qtyPieces || 0, "", "", "", "", "", "", eski]);
+      }
+    }
+
+    downloadExcel("otchet", "Otchet",
+      ["SHAFYOR", "SANA", "DOKON NOMI", "KATEGORIYA", "POCHKA", "DONA", "SINIQ", "NARX", "SUMMA", "NAXT", "QARZ", "KLIK", "PERECHESLENIYA", "ESKIQARZ"],
+      rows);
+  };
+
   // 3. По магазину (акт сверки)
   const reportByShop = (shopId: string) => {
     const shop = shops.find(s => s.id === shopId);
@@ -2312,6 +2382,15 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                       </button>
                     )}
                   </div>
+
+                  {/* Главный отчёт в формате заказчика */}
+                  <button onClick={reportCustomerFormat} className="flex items-center gap-3 p-4 rounded-xl border-2 border-emerald-300 bg-emerald-50/60 hover:bg-emerald-100/60 transition-all text-left cursor-pointer">
+                    <FileSpreadsheet className="w-6 h-6 text-emerald-700 shrink-0" />
+                    <div>
+                      <p className="text-sm font-bold text-slate-800">{lang === "ru" ? "★ Полный отчёт (формат заказчика)" : "★ To'liq hisobot"}</p>
+                      <p className="text-[11px] text-slate-500">SHAFYOR · SANA · DOKON · KATEGORIYA · POCHKA · DONA · SINIQ · NARX · SUMMA · NAXT · QARZ · KLIK · PERECHESLENIYA</p>
+                    </div>
+                  </button>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <button onClick={reportDebtors} className="flex items-center gap-3 p-4 rounded-xl border border-slate-200 hover:border-emerald-300 hover:bg-emerald-50/40 transition-all text-left cursor-pointer">
