@@ -5,7 +5,7 @@ import {
   Truck, DollarSign, LogOut, CheckCircle2, 
   MapPin, Clipboard, Plus, Shield, Check, X, ArrowRight, Loader2,
   Calendar, Clock, Edit2, Trash2, History, User, ListFilter, Building2, BookOpen,
-  Zap, AlertTriangle
+  Zap, AlertTriangle, RotateCcw
 } from "lucide-react";
 import {
   loadShops, saveShop, loadSettings, loadInventory, saveInventory,
@@ -73,7 +73,13 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
   // Forms
   const [isCollectOpen, setIsCollectOpen] = useState(false);
   const [isSaleOpen, setIsSaleOpen] = useState(false);
-  
+  const [isReturnOpen, setIsReturnOpen] = useState(false);
+
+  // Возврат-возмещение (строго по штукам)
+  const [returnEggType, setReturnEggType] = useState("c0");
+  const [returnQty, setReturnQty] = useState(0);
+  const [returnComment, setReturnComment] = useState("");
+
   // Selection
   const [selectedShopId, setSelectedShopId] = useState("");
   
@@ -453,6 +459,59 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
     }
   };
 
+  // Возврат-возмещение: строго по штукам, той же категорией. Долг НЕ меняется.
+  const handleReturnSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const qty = Math.floor(Number(returnQty) || 0);
+    if (!selectedShopId || qty <= 0) {
+      showToast(t.errorFillAll, "error");
+      return;
+    }
+    try {
+      const shop = shops.find(s => s.id === selectedShopId);
+      if (!shop) return;
+      const eggObj = eggTypes.find(eg => eg.id === returnEggType);
+      const eggName = eggObj ? (lang === "ru" ? eggObj.nameRu : eggObj.nameUz) : returnEggType.toUpperCase();
+
+      const logMsg = lang === "ru"
+        ? `Возврат (возмещение): ${shop.name} | ${qty} шт ${eggName}${returnComment ? ` — ${returnComment}` : ""}`
+        : `Qaytarish (o'rnini bosish): ${shop.name} | ${qty} dona ${eggName}${returnComment ? ` — ${returnComment}` : ""}`;
+
+      await addActivityLog({
+        timestamp: new Date().toISOString(),
+        operationDate: new Date().toISOString(),
+        type: "return",
+        message: logMsg,
+        eggType: returnEggType,
+        qtyPieces: qty,
+        amount: 0,
+        operator: `${username} (доставщик)`,
+        operatorUsername: username,
+        shopId: shop.id,
+        comment: returnComment || "",
+      });
+
+      setIsReturnOpen(false);
+      setConfirmResult({
+        title: lang === "ru" ? "Возврат оформлен" : "Qaytarish rasmiylashtirildi",
+        shopName: shop.name,
+        newDebt: shop.debt,
+        lines: [
+          { label: lang === "ru" ? "Категория" : "Kategoriya", value: eggName, strong: true },
+          { label: lang === "ru" ? "Возвращено (шт)" : "Qaytarildi (dona)", value: String(qty) },
+          { label: lang === "ru" ? "Возмещение" : "O'rnini bosish", value: lang === "ru" ? "той же категорией" : "shu kategoriya bilan" },
+        ],
+      });
+      setReturnEggType("c0");
+      setReturnQty(0);
+      setReturnComment("");
+      setSelectedShopId("");
+      await loadData();
+    } catch (err) {
+      showToast(lang === "ru" ? "Ошибка при оформлении возврата" : "Qaytarishda xatolik", "error");
+    }
+  };
+
   // Cancel Operation (with 24 hours constraint checking)
   const handleCancelLog = async (log: any) => {
     const hoursSinceCreation = (Date.now() - new Date(log.timestamp).getTime()) / (1000 * 60 * 60);
@@ -751,27 +810,41 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
           {activeTab === "route" ? (
             <>
               {/* Main Quick Action Panels */}
-              <div className="grid grid-cols-2 gap-3 shrink-0">
-                <button 
+              <div className="grid grid-cols-3 gap-3 shrink-0">
+                <button
                   onClick={() => {
                     setIsCollectOpen(true);
                     setIsSaleOpen(false);
+                    setIsReturnOpen(false);
                   }}
                   className="bg-slate-900 text-white p-4 rounded-xl border border-slate-800 shadow-sm flex flex-col items-center justify-center text-center gap-1.5 hover:bg-slate-800 cursor-pointer transition-colors"
                 >
                   <DollarSign className="w-5 h-5 text-amber-400" />
-                  <span className="text-xs font-bold">{t.collectCash}</span>
+                  <span className="text-[11px] font-bold">{t.collectCash}</span>
                 </button>
 
-                <button 
+                <button
                   onClick={() => {
                     setIsSaleOpen(true);
                     setIsCollectOpen(false);
+                    setIsReturnOpen(false);
                   }}
                   className="bg-white text-slate-900 p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center justify-center text-center gap-1.5 hover:bg-slate-50 cursor-pointer transition-colors"
                 >
                   <Plus className="w-5 h-5 text-slate-900" />
-                  <span className="text-xs font-bold">{t.recordSale}</span>
+                  <span className="text-[11px] font-bold">{t.recordSale}</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setIsReturnOpen(true);
+                    setIsSaleOpen(false);
+                    setIsCollectOpen(false);
+                  }}
+                  className="bg-white text-slate-900 p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center justify-center text-center gap-1.5 hover:bg-slate-50 cursor-pointer transition-colors"
+                >
+                  <RotateCcw className="w-5 h-5 text-orange-500" />
+                  <span className="text-[11px] font-bold">{lang === "ru" ? "Возврат" : "Qaytarish"}</span>
                 </button>
               </div>
 
@@ -1030,6 +1103,97 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
           )}
 
           {/* Collapsible Action Modal: Collect Payment */}
+          {/* Возврат-возмещение (строго по штукам) */}
+          {isReturnOpen && (
+            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in-50">
+              <div className="bg-white w-full max-w-md rounded-t-2xl sm:rounded-2xl border-t sm:border border-slate-200 overflow-hidden shadow-2xl animate-in slide-in-from-bottom-24">
+                <div className="bg-slate-900 p-4 text-white flex justify-between items-center border-b border-slate-800">
+                  <div className="flex items-center gap-2">
+                    <RotateCcw className="w-5 h-5 text-orange-400" />
+                    <span className="font-bold text-sm">{lang === "ru" ? "Возврат (возмещение)" : "Qaytarish (o'rnini bosish)"}</span>
+                  </div>
+                  <button onClick={() => setIsReturnOpen(false)} className="text-slate-400 hover:text-white transition-colors cursor-pointer">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <form onSubmit={handleReturnSubmit} className="p-5 flex flex-col gap-4">
+                  <div className="bg-orange-50 border border-orange-100 text-orange-800 rounded-lg px-3 py-2 text-[11px] leading-snug">
+                    {lang === "ru"
+                      ? "Возврат = возмещение той же категорией, строго по штукам. Деньги не возвращаются, долг не меняется."
+                      : "Qaytarish = shu kategoriya bilan o'rnini bosish, faqat donada. Pul qaytarilmaydi, qarz o'zgarmaydi."}
+                  </div>
+
+                  {/* Shop */}
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{t.selectShop}</label>
+                    <select
+                      value={selectedShopId}
+                      onChange={(e) => setSelectedShopId(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-semibold focus:outline-none focus:border-amber-400 bg-white"
+                      required
+                    >
+                      <option value="">-- {lang === "ru" ? "Выбрать" : "Tanlash"} --</option>
+                      {shops.map(s => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Egg category */}
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{lang === "ru" ? "Категория яиц" : "Tuxum kategoriyasi"}</label>
+                    <select
+                      value={returnEggType}
+                      onChange={(e) => setReturnEggType(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-semibold focus:outline-none focus:border-amber-400 bg-white"
+                      required
+                    >
+                      {eggTypes.map(eg => (
+                        <option key={eg.id} value={eg.id}>{lang === "ru" ? eg.nameRu : eg.nameUz}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Quantity in pieces (strictly) */}
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{lang === "ru" ? "Количество (штук)" : "Miqdori (dona)"}</label>
+                    <input
+                      type="number" min="1" step="1" inputMode="numeric"
+                      placeholder={lang === "ru" ? "Сколько штук возместить" : "Necha dona"}
+                      value={returnQty || ""}
+                      onChange={(e) => setReturnQty(Math.max(0, Math.floor(Number(e.target.value))))}
+                      className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm font-bold focus:outline-none focus:border-amber-400 font-mono"
+                      required
+                    />
+                  </div>
+
+                  {/* Comment */}
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{lang === "ru" ? "Комментарий (необязательно)" : "Izoh (ixtiyoriy)"}</label>
+                    <input
+                      type="text"
+                      placeholder={lang === "ru" ? "Например: бой при доставке" : "Masalan: yetkazishda siniq"}
+                      value={returnComment}
+                      onChange={(e) => setReturnComment(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-semibold focus:outline-none focus:border-amber-400 bg-white"
+                    />
+                  </div>
+
+                  <div className="flex gap-3 mt-1">
+                    <button type="button" onClick={() => setIsReturnOpen(false)} className="flex-1 py-2 rounded-lg border border-slate-200 text-slate-500 font-bold text-xs hover:bg-slate-50 transition-all cursor-pointer">
+                      {lang === "ru" ? "Отмена" : "Bekor"}
+                    </button>
+                    <button type="submit" className="flex-1 py-2 rounded-lg bg-orange-500 hover:bg-orange-600 text-white font-bold text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5">
+                      <RotateCcw className="w-4 h-4" />
+                      {lang === "ru" ? "Оформить возврат" : "Qaytarishni rasmiylashtirish"}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
           {isCollectOpen && (
             <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in-50">
               <div className="bg-white w-full max-w-md rounded-t-2xl sm:rounded-2xl border-t sm:border border-slate-200 overflow-hidden shadow-2xl animate-in slide-in-from-bottom-24">

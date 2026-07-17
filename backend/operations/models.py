@@ -143,6 +143,47 @@ class Payment(models.Model):
         return f"Оплата #{self.pk} — {self.shop.name} ({self.amount} сум)"
 
 
+class Return(models.Model):
+    """
+    Возврат-возмещение: доставщик возмещает бой/брак той же категорией яиц,
+    строго ПО ШТУКАМ (не пачками). Это НЕ возврат денег — доставщик отдаёт
+    другие яйца той же категории, поэтому долг магазина НЕ меняется.
+    Учитывается для контроля (админ видит: кто, магазин, категория, сколько штук).
+    """
+
+    shop = models.ForeignKey(Shop, on_delete=models.PROTECT, related_name="returns", verbose_name="Магазин")
+    deliverer = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="returns", verbose_name="Доставщик",
+    )
+    egg_type = models.ForeignKey(EggType, on_delete=models.PROTECT, related_name="returns", verbose_name="Вид яиц")
+    quantity = models.PositiveIntegerField("Количество (штук)")
+
+    operation_date = models.DateTimeField("Дата возврата", default=timezone.now)
+    comment = models.CharField("Комментарий", max_length=300, blank=True)
+    message = models.TextField("Описание", blank=True)
+    is_edited = models.BooleanField("Изменена", default=False)
+
+    is_cancelled = models.BooleanField("Аннулирована", default=False)
+    cancelled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="cancelled_returns", verbose_name="Аннулировал",
+    )
+    cancelled_at = models.DateTimeField("Дата аннулирования", null=True, blank=True)
+
+    created_at = models.DateTimeField("Создана", auto_now_add=True)
+
+    objects = CancellableQuerySet.as_manager()
+
+    class Meta:
+        db_table = "returns"
+        verbose_name = "Возврат (возмещение)"
+        verbose_name_plural = "Возвраты (возмещения)"
+        ordering = ["-operation_date"]
+
+    def __str__(self) -> str:
+        return f"Возврат #{self.pk} — {self.shop.name} ({self.quantity} шт {self.egg_type.name_ru})"
+
+
 class Adjustment(models.Model):
     """Корректировка долга (только админ): сумма ± и причина (ТЗ п.3.2/5.1)."""
 

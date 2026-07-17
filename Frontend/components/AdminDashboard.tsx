@@ -2089,18 +2089,20 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                                 )}
                               </td>
                               <td className="px-6 py-3.5 text-right font-mono font-bold text-slate-900">
-                                {log.amount?.toLocaleString()} сум
+                                {log.type === "return" ? `${log.qtyPieces ?? 0} шт` : `${log.amount?.toLocaleString()} сум`}
                               </td>
                               <td className="px-6 py-3.5 font-medium text-slate-600">{log.operator}</td>
                               <td className="px-6 py-3.5 text-center">
                                 <span className={`inline-block px-2.5 py-1 rounded text-[10px] font-bold uppercase tracking-wider ${
-                                  log.isCancelled 
-                                    ? "bg-slate-200 text-slate-600" 
-                                    : log.type === "payment" && !log.qty
-                                      ? "bg-green-100 text-green-800" 
-                                      : "bg-amber-100 text-amber-800"
+                                  log.isCancelled
+                                    ? "bg-slate-200 text-slate-600"
+                                    : log.type === "return"
+                                      ? "bg-orange-100 text-orange-800"
+                                      : log.type === "payment" && !log.qty
+                                        ? "bg-green-100 text-green-800"
+                                        : "bg-amber-100 text-amber-800"
                                 }`}>
-                                  {log.isCancelled ? "АННУЛИРОВАНО" : log.type === "payment" && !log.qty ? "Оплата" : "Продажа"}
+                                  {log.isCancelled ? "АННУЛИРОВАНО" : log.type === "return" ? "Возврат" : log.type === "payment" && !log.qty ? "Оплата" : "Продажа"}
                                 </span>
                               </td>
                               <td className="px-6 py-3.5 text-right">
@@ -2415,7 +2417,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
               return d.toDateString() === new Date().toDateString();
             };
             const ops = activityLogs
-              .filter(l => !l.isCancelled && String(l.operatorId ?? "") === String(reportDeliverer.id) && (l.type === "sale" || l.type === "payment"))
+              .filter(l => !l.isCancelled && String(l.operatorId ?? "") === String(reportDeliverer.id) && (l.type === "sale" || l.type === "payment" || l.type === "return"))
               .filter(l => reportDelivererPeriod === "all" ? true : isToday(l));
             const sales = ops.filter(l => l.type === "sale");
             const sold = sales.reduce((s, l) => s + (l.total ?? l.amount ?? 0), 0);
@@ -2469,11 +2471,11 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                               <td className="px-4 py-2.5 font-mono text-[11px] text-slate-500">{op.timestamp ? new Date(op.timestamp).toLocaleString() : "—"}</td>
                               <td className="px-4 py-2.5 font-medium text-slate-800">{op.shopName || shopNameById(op.shopId)}</td>
                               <td className="px-4 py-2.5 text-center">
-                                <span className={`inline-block px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${op.type === "payment" ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-800"}`}>
-                                  {op.type === "payment" ? (lang === "ru" ? "Оплата" : "To'lov") : (lang === "ru" ? "Продажа" : "Sotuv")}
+                                <span className={`inline-block px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${op.type === "payment" ? "bg-green-100 text-green-800" : op.type === "return" ? "bg-orange-100 text-orange-800" : "bg-amber-100 text-amber-800"}`}>
+                                  {op.type === "payment" ? (lang === "ru" ? "Оплата" : "To'lov") : op.type === "return" ? (lang === "ru" ? "Возврат" : "Qaytarish") : (lang === "ru" ? "Продажа" : "Sotuv")}
                                 </span>
                               </td>
-                              <td className="px-4 py-2.5 text-right font-mono font-bold text-slate-900">{formatSum(op.type === "sale" ? (op.total ?? op.amount ?? 0) : (op.amount ?? 0), lang)}</td>
+                              <td className="px-4 py-2.5 text-right font-mono font-bold text-slate-900">{op.type === "return" ? `${op.qtyPieces ?? 0} шт` : formatSum(op.type === "sale" ? (op.total ?? op.amount ?? 0) : (op.amount ?? 0), lang)}</td>
                             </tr>
                           ))}
                           {ops.length === 0 && (
@@ -2500,6 +2502,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                     <span className="font-bold tracking-tight text-base">
                       {viewOp.type === "payment" ? (lang === "ru" ? "Приём оплаты" : "To'lov") :
                        viewOp.type === "sale" ? (lang === "ru" ? "Продажа" : "Sotuv") :
+                       viewOp.type === "return" ? (lang === "ru" ? "Возврат (возмещение)" : "Qaytarish") :
                        viewOp.type === "adjustment" ? (lang === "ru" ? "Корректировка" : "Tuzatish") : (lang === "ru" ? "Операция" : "Amaliyot")}
                     </span>
                     <span className="font-mono text-[10px] text-slate-400">#{viewOp.id}</span>
@@ -2514,7 +2517,14 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                     <div><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "Магазин" : "Do'kon"}</p><p className="font-semibold text-slate-800">{viewOp.shopName || shopNameById(viewOp.shopId)}</p></div>
                     <div><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "Доставщик" : "Yetkazuvchi"}</p><p className="font-semibold text-slate-800">{viewOp.operator || "—"}</p></div>
                     <div><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "Дата и время" : "Sana va vaqt"}</p><p className="font-mono text-slate-800">{viewOp.timestamp ? new Date(viewOp.timestamp).toLocaleString() : "—"}</p></div>
-                    <div><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{t.paymentType}</p><p className="font-semibold text-slate-800">{viewOp.paymentType === "cash" ? t.cash : viewOp.paymentType === "card" ? t.card : viewOp.paymentType === "transfer" ? t.transfer : viewOp.paymentType === "debt" ? (lang === "ru" ? "В долг" : "Nasiya") : "—"}</p></div>
+                    {viewOp.type === "return" ? (
+                      <>
+                        <div><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "Категория" : "Kategoriya"}</p><p className="font-semibold text-slate-800">{lang === "ru" ? viewOp.eggNameRu : (viewOp.eggNameUz || viewOp.eggNameRu)}</p></div>
+                        <div><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "Возвращено (шт)" : "Qaytarildi (dona)"}</p><p className="font-bold text-orange-600 font-mono">{viewOp.qtyPieces ?? 0}</p></div>
+                      </>
+                    ) : (
+                      <div><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{t.paymentType}</p><p className="font-semibold text-slate-800">{viewOp.paymentType === "cash" ? t.cash : viewOp.paymentType === "card" ? t.card : viewOp.paymentType === "transfer" ? t.transfer : viewOp.paymentType === "debt" ? (lang === "ru" ? "В долг" : "Nasiya") : "—"}</p></div>
+                    )}
                   </div>
 
                   {/* Позиции продажи (что/сколько/по какой цене) */}
@@ -2551,6 +2561,10 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                         <div className="flex justify-between"><span className="text-slate-500">{lang === "ru" ? "Получено" : "Qabul qilindi"}</span><span className="font-mono font-bold text-emerald-600">{formatSum(viewOp.received ?? 0, lang)}</span></div>
                         <div className="flex justify-between"><span className="text-slate-500">{lang === "ru" ? "В долг" : "Nasiya"}</span><span className="font-mono font-bold text-red-600">{formatSum((viewOp.total ?? 0) - (viewOp.received ?? 0), lang)}</span></div>
                       </>
+                    ) : viewOp.type === "return" ? (
+                      <div className="bg-orange-50 border border-orange-100 text-orange-800 rounded-lg px-3 py-2 text-[11px] font-semibold">
+                        {lang === "ru" ? "Возмещение той же категорией по штукам. На долг и деньги не влияет." : "Shu kategoriya bilan donada o'rnini bosish. Qarz va pulga ta'sir qilmaydi."}
+                      </div>
                     ) : (
                       <div className="flex justify-between"><span className="text-slate-500">{lang === "ru" ? "Сумма" : "Summa"}</span><span className="font-mono font-bold text-slate-900">{formatSum(viewOp.amount ?? 0, lang)}</span></div>
                     )}

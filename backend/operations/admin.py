@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import ActivityLog, Adjustment, Payment, Sale, SaleItem
+from .models import ActivityLog, Adjustment, Payment, Return, Sale, SaleItem
 
 
 class SaleItemInline(admin.TabularInline):
@@ -26,6 +26,14 @@ class SaleAdmin(admin.ModelAdmin):
 class PaymentAdmin(admin.ModelAdmin):
     list_display = ("id", "shop", "operator", "operation_date", "amount", "payment_method", "is_cancelled")
     list_filter = ("is_cancelled", "payment_method", "operation_date")
+    search_fields = ("shop__name", "comment")
+    date_hierarchy = "operation_date"
+
+
+@admin.register(Return)
+class ReturnAdmin(admin.ModelAdmin):
+    list_display = ("id", "shop", "deliverer", "egg_type", "quantity", "operation_date", "is_cancelled")
+    list_filter = ("is_cancelled", "operation_date", "deliverer", "egg_type")
     search_fields = ("shop__name", "comment")
     date_hierarchy = "operation_date"
 
