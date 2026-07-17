@@ -72,6 +72,9 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
   const [opSearchQuery, setOpSearchQuery] = useState("");
   // Просмотр деталей операции по клику (П4)
   const [viewOp, setViewOp] = useState<any>(null);
+  // Отчёт по доставщику (П2): выбранный доставщик и период
+  const [reportDeliverer, setReportDeliverer] = useState<any>(null);
+  const [reportDelivererPeriod, setReportDelivererPeriod] = useState<"today" | "all">("today");
 
   // Configuration States (Settings Modal)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -1769,7 +1772,11 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                     <tbody className="divide-y divide-slate-100 text-sm">
                       {deliverers.map(del => (
                         <tr key={del.id} className={`hover:bg-slate-50/50 transition-colors ${del.status === "blocked" ? "opacity-60 bg-red-50/20" : ""}`}>
-                          <td className="px-6 py-3.5 font-bold text-slate-800">{del.name}</td>
+                          <td className="px-6 py-3.5 font-bold text-slate-800">
+                            <button onClick={() => { setReportDeliverer(del); setReportDelivererPeriod("today"); }} className="text-slate-800 hover:text-amber-600 underline decoration-dotted underline-offset-2 cursor-pointer" title={lang === "ru" ? "Открыть отчёт" : "Hisobotni ochish"}>
+                              {del.name}
+                            </button>
+                          </td>
                           <td className="px-6 py-3.5 font-mono text-xs">{del.username || del.name.toLowerCase()}</td>
                           <td className="px-6 py-3.5 font-mono text-xs text-slate-600">{del.phone || "—"}</td>
                           <td className="px-6 py-3.5 font-mono text-xs text-slate-400">•••••• <span className="text-[9px] uppercase">{lang === "ru" ? "(хеш)" : "(hash)"}</span></td>
@@ -1787,7 +1794,14 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                           </td>
                           <td className="px-6 py-3.5 text-right">
                             <div className="flex justify-end gap-2">
-                              <button 
+                              <button
+                                onClick={() => { setReportDeliverer(del); setReportDelivererPeriod("today"); }}
+                                className="p-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded transition-all cursor-pointer"
+                                title={lang === "ru" ? "Отчёт доставщика" : "Yetkazuvchi hisoboti"}
+                              >
+                                <FileText className="w-3.5 h-3.5" />
+                              </button>
+                              <button
                                 onClick={() => handleToggleBlockDeliverer(del)}
                                 className={`p-1.5 rounded border text-xs font-bold transition-all cursor-pointer ${
                                   del.status === "blocked"
@@ -2375,6 +2389,88 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
             )}
 
           </div>
+
+          {/* Modal: отчёт по доставщику (П2) */}
+          {reportDeliverer && (() => {
+            const isToday = (l: any) => {
+              const d = new Date(l.operationDate || l.timestamp);
+              return d.toDateString() === new Date().toDateString();
+            };
+            const ops = activityLogs
+              .filter(l => !l.isCancelled && String(l.operatorId ?? "") === String(reportDeliverer.id) && (l.type === "sale" || l.type === "payment"))
+              .filter(l => reportDelivererPeriod === "all" ? true : isToday(l));
+            const sales = ops.filter(l => l.type === "sale");
+            const sold = sales.reduce((s, l) => s + (l.total ?? l.amount ?? 0), 0);
+            const collected = ops.reduce((s, l) => s + (l.type === "sale" ? (l.received || 0) : (l.amount || 0)), 0);
+            const toDebt = sales.reduce((s, l) => s + ((l.total ?? l.amount ?? 0) - (l.received || 0)), 0);
+            return (
+            <div onClick={() => setReportDeliverer(null)} className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-40 p-4 animate-in fade-in-50">
+              <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-xl border border-slate-200 shadow-2xl w-full max-w-2xl overflow-hidden animate-in zoom-in-95 flex flex-col max-h-[90vh]">
+                <div className="bg-slate-900 text-white px-5 py-4 flex justify-between items-center">
+                  <div className="flex items-center gap-2">
+                    <Truck className="w-4 h-4 text-amber-400" />
+                    <span className="font-bold tracking-tight text-base">{lang === "ru" ? "Отчёт доставщика" : "Yetkazuvchi hisoboti"}: {reportDeliverer.name}</span>
+                  </div>
+                  <button onClick={() => setReportDeliverer(null)} className="text-slate-400 hover:text-white cursor-pointer"><X className="w-5 h-5" /></button>
+                </div>
+
+                <div className="p-5 flex flex-col gap-4 overflow-y-auto">
+                  {/* Период */}
+                  <div className="flex bg-slate-100 rounded-lg p-1 border border-slate-200 self-start">
+                    {([["today", lang === "ru" ? "Сегодня" : "Bugun"], ["all", lang === "ru" ? "За всё время" : "Butun davr"]] as const).map(([id, label]) => (
+                      <button key={id} onClick={() => setReportDelivererPeriod(id)}
+                        className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all cursor-pointer ${reportDelivererPeriod === id ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Сводка */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="bg-slate-50 border border-slate-200 rounded-lg p-3"><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "Продаж" : "Sotuvlar"}</p><p className="text-lg font-mono font-bold text-slate-900">{sales.length}</p></div>
+                    <div className="bg-slate-50 border border-slate-200 rounded-lg p-3"><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "Продано" : "Sotilgan"}</p><p className="text-lg font-mono font-bold text-slate-900">{formatSum(sold, lang)}</p></div>
+                    <div className="bg-slate-50 border border-slate-200 rounded-lg p-3"><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "Собрано" : "Yig'ilgan"}</p><p className="text-lg font-mono font-bold text-emerald-600">{formatSum(collected, lang)}</p></div>
+                    <div className="bg-slate-50 border border-slate-200 rounded-lg p-3"><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "В долг" : "Nasiya"}</p><p className="text-lg font-mono font-bold text-red-600">{formatSum(toDebt, lang)}</p></div>
+                  </div>
+
+                  {/* Список операций (клик → детали) */}
+                  <div className="border border-slate-200 rounded-lg overflow-hidden">
+                    <div className="overflow-x-auto max-h-[45vh] overflow-y-auto">
+                      <table className="w-full text-left border-collapse text-sm">
+                        <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 font-bold sticky top-0">
+                          <tr>
+                            <th className="px-4 py-2.5">{lang === "ru" ? "Дата / время" : "Sana / vaqt"}</th>
+                            <th className="px-4 py-2.5">{lang === "ru" ? "Магазин" : "Do'kon"}</th>
+                            <th className="px-4 py-2.5 text-center">{lang === "ru" ? "Тип" : "Turi"}</th>
+                            <th className="px-4 py-2.5 text-right">{lang === "ru" ? "Сумма" : "Summa"}</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {ops.map(op => (
+                            <tr key={op.id} onClick={() => setViewOp(op)} className="hover:bg-amber-50/40 cursor-pointer transition-colors">
+                              <td className="px-4 py-2.5 font-mono text-[11px] text-slate-500">{op.timestamp ? new Date(op.timestamp).toLocaleString() : "—"}</td>
+                              <td className="px-4 py-2.5 font-medium text-slate-800">{op.shopName || shopNameById(op.shopId)}</td>
+                              <td className="px-4 py-2.5 text-center">
+                                <span className={`inline-block px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${op.type === "payment" ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-800"}`}>
+                                  {op.type === "payment" ? (lang === "ru" ? "Оплата" : "To'lov") : (lang === "ru" ? "Продажа" : "Sotuv")}
+                                </span>
+                              </td>
+                              <td className="px-4 py-2.5 text-right font-mono font-bold text-slate-900">{formatSum(op.type === "sale" ? (op.total ?? op.amount ?? 0) : (op.amount ?? 0), lang)}</td>
+                            </tr>
+                          ))}
+                          {ops.length === 0 && (
+                            <tr><td colSpan={4} className="px-4 py-8 text-center text-slate-400 text-xs">{lang === "ru" ? "Нет операций за период." : "Bu davrda amaliyotlar yo'q."}</td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-slate-400">{lang === "ru" ? "Нажмите на операцию, чтобы увидеть детали (что, сколько и по какой цене)." : "Tafsilotlarni ko'rish uchun amaliyotni bosing."}</p>
+                </div>
+              </div>
+            </div>
+            );
+          })()}
 
           {/* Modal: детали операции (П4 — клик по операции) */}
           {viewOp && (
