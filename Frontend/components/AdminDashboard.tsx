@@ -832,32 +832,25 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
   };
 
   // ---- Excel export (ТЗ п.4.9) --------------------------------------------
-  // Dependency-free .xls (SpreadsheetML/HTML) — opens natively in Excel,
-  // LibreOffice and Google Sheets, keeps Cyrillic/Uzbek, in the interface lang.
-  const xmlEscape = (v: any) =>
-    String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
-  const downloadExcel = (filenameBase: string, title: string, headers: string[], rows: (string | number)[][]) => {
-    const thead = `<tr>${headers.map(h => `<th style="background:#0f172a;color:#fbbf24;border:1px solid #94a3b8;padding:4px;font-weight:bold">${xmlEscape(h)}</th>`).join("")}</tr>`;
-    const tbody = rows.map(r =>
-      `<tr>${r.map(c => `<td style="border:1px solid #cbd5e1;padding:4px">${xmlEscape(c)}</td>`).join("")}</tr>`
-    ).join("");
-    const html =
-      `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">` +
-      `<head><meta charset="UTF-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>` +
-      `<x:Name>${xmlEscape(title).slice(0, 28)}</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions>` +
-      `</x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head>` +
-      `<body><table>${thead}${tbody}</table></body></html>`;
-    const blob = new Blob(["﻿" + html], { type: "application/vnd.ms-excel;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${filenameBase}_${new Date().toISOString().split("T")[0]}.xls`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    showToast(lang === "ru" ? "Отчёт выгружен в Excel" : "Hisobot Excelга yuklandi");
+  // Настоящий .xlsx через SheetJS (динамический импорт — не грузим в основной бандл).
+  // Сохраняет кириллицу/узбекский; открывается в Excel/LibreOffice/Sheets.
+  const downloadExcel = async (filenameBase: string, title: string, headers: string[], rows: (string | number)[][]) => {
+    try {
+      const mod: any = await import("xlsx");
+      const XLSX = mod.default ?? mod;
+      const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+      // Ширина колонок по содержимому (для читаемости).
+      ws["!cols"] = headers.map((h, i) => {
+        const maxLen = Math.max(String(h).length, ...rows.map(r => String(r[i] ?? "").length));
+        return { wch: Math.min(40, Math.max(8, maxLen + 2)) };
+      });
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, (title || "Отчёт").slice(0, 28));
+      XLSX.writeFile(wb, `${filenameBase}_${new Date().toISOString().split("T")[0]}.xlsx`);
+      showToast(lang === "ru" ? "Отчёт выгружен в Excel" : "Hisobot Excelга yuklandi");
+    } catch (e) {
+      showToast(lang === "ru" ? "Ошибка выгрузки в Excel" : "Excelга yuklashda xatolik", "error");
+    }
   };
 
   const opsInPeriod = () => {
@@ -2388,7 +2381,6 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                     <FileSpreadsheet className="w-6 h-6 text-emerald-700 shrink-0" />
                     <div>
                       <p className="text-sm font-bold text-slate-800">{lang === "ru" ? "Основной отчёт" : "Asosiy hisobot"}</p>
-                      <p className="text-[11px] text-slate-500">SHAFYOR · SANA · DOKON · KATEGORIYA · POCHKA · DONA · SINIQ · NARX · SUMMA · NAXT · QARZ · KLIK · PERECHESLENIYA</p>
                     </div>
                   </button>
 
