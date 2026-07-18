@@ -2387,7 +2387,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                   <button onClick={reportCustomerFormat} className="flex items-center gap-3 p-4 rounded-xl border-2 border-emerald-300 bg-emerald-50/60 hover:bg-emerald-100/60 transition-all text-left cursor-pointer">
                     <FileSpreadsheet className="w-6 h-6 text-emerald-700 shrink-0" />
                     <div>
-                      <p className="text-sm font-bold text-slate-800">{lang === "ru" ? "★ Полный отчёт (формат заказчика)" : "★ To'liq hisobot"}</p>
+                      <p className="text-sm font-bold text-slate-800">{lang === "ru" ? "Основной отчёт" : "Asosiy hisobot"}</p>
                       <p className="text-[11px] text-slate-500">SHAFYOR · SANA · DOKON · KATEGORIYA · POCHKA · DONA · SINIQ · NARX · SUMMA · NAXT · QARZ · KLIK · PERECHESLENIYA</p>
                     </div>
                   </button>
