@@ -5,7 +5,7 @@ import {
   Truck, DollarSign, LogOut, CheckCircle2, 
   MapPin, Clipboard, Plus, Shield, Check, X, ArrowRight, Loader2,
   Calendar, Clock, Edit2, Trash2, History, User, ListFilter, Building2, BookOpen,
-  Zap, AlertTriangle, RotateCcw
+  Zap, AlertTriangle, RotateCcw, Wallet, UtensilsCrossed
 } from "lucide-react";
 import {
   loadShops, saveShop, loadSettings, loadInventory, saveInventory,
@@ -73,9 +73,15 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
   // Forms
   const [isCollectOpen, setIsCollectOpen] = useState(false);
   const [isSaleOpen, setIsSaleOpen] = useState(false);
-  const [isReturnOpen, setIsReturnOpen] = useState(false);
+  const [isExpenseOpen, setIsExpenseOpen] = useState(false);
 
-  // Возврат-возмещение (строго по штукам)
+  // Каждодневный расход (обед / прочее)
+  const [expenseAmount, setExpenseAmount] = useState(0);
+  const [expenseCategory, setExpenseCategory] = useState<"lunch" | "other">("lunch");
+  const [expenseComment, setExpenseComment] = useState("");
+
+  // Возврат (бой/брак) прямо при оформлении продажи — строго по штукам
+  const [saleReturnOpen, setSaleReturnOpen] = useState(false);
   const [returnEggType, setReturnEggType] = useState("c0");
   const [returnQty, setReturnQty] = useState(0);
   const [returnComment, setReturnComment] = useState("");
@@ -103,6 +109,7 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
     lines: { label: string; value: string; strong?: boolean }[];
     newDebt: number;
     shopName: string;
+    hideDebt?: boolean; // для операций без магазина (например, расход)
   }>(null);
 
   // Toasts
@@ -174,6 +181,10 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
     setSalePayMethod("cash");
     setSaleDate(todayISO);
     setIsInlineCreateShopOpen(false);
+    setSaleReturnOpen(false);
+    setReturnEggType("c0");
+    setReturnQty(0);
+    setReturnComment("");
   };
 
   // Filter shops based on search query
@@ -437,6 +448,30 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
         manualDate: saleDate !== todayISO,
       });
 
+      // Возврат (бой/брак) сразу при оформлении продажи (по штукам, долг не меняется)
+      const retQty = saleReturnOpen ? Math.floor(Number(returnQty) || 0) : 0;
+      let retName = "";
+      if (retQty > 0) {
+        const retEgg = eggTypes.find(eg => eg.id === returnEggType);
+        retName = retEgg ? (lang === "ru" ? retEgg.nameRu : retEgg.nameUz) : returnEggType.toUpperCase();
+        const retMsg = lang === "ru"
+          ? `Возврат (возмещение): ${shop.name} | ${retQty} шт ${retName}${returnComment ? ` — ${returnComment}` : ""}`
+          : `Qaytarish (o'rnini bosish): ${shop.name} | ${retQty} dona ${retName}${returnComment ? ` — ${returnComment}` : ""}`;
+        await addActivityLog({
+          timestamp: new Date().toISOString(),
+          operationDate,
+          type: "return",
+          message: retMsg,
+          eggType: returnEggType,
+          qtyPieces: retQty,
+          amount: 0,
+          operator: `${username} (доставщик)`,
+          operatorUsername: username,
+          shopId: shop.id,
+          comment: returnComment || "",
+        });
+      }
+
       setIsSaleOpen(false);
       setConfirmResult({
         title: lang === "ru" ? "Продажа сохранена" : "Sotuv saqlandi",
@@ -449,6 +484,10 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
             label: debtDelta >= 0 ? (lang === "ru" ? "В долг" : "Nasiya") : (lang === "ru" ? "Аванс" : "Avans"),
             value: formatSum(Math.abs(debtDelta), lang),
           },
+          ...(retQty > 0 ? [{
+            label: lang === "ru" ? "Возврат (бой)" : "Qaytarish (siniq)",
+            value: `${retQty} ${lang === "ru" ? "шт" : "dona"} ${retName}`,
+          }] : []),
         ],
       });
       resetSaleForm();
@@ -459,56 +498,53 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
     }
   };
 
-  // Возврат-возмещение: строго по штукам, той же категорией. Долг НЕ меняется.
-  const handleReturnSubmit = async (e: React.FormEvent) => {
+  // Каждодневный расход (обед / прочее): не привязан к магазину, долги не меняет.
+  const handleExpenseSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const qty = Math.floor(Number(returnQty) || 0);
-    if (!selectedShopId || qty <= 0) {
+    const amount = Math.max(0, Number(expenseAmount) || 0);
+    if (amount <= 0) {
       showToast(t.errorFillAll, "error");
       return;
     }
     try {
-      const shop = shops.find(s => s.id === selectedShopId);
-      if (!shop) return;
-      const eggObj = eggTypes.find(eg => eg.id === returnEggType);
-      const eggName = eggObj ? (lang === "ru" ? eggObj.nameRu : eggObj.nameUz) : returnEggType.toUpperCase();
+      const catLabel = expenseCategory === "lunch"
+        ? (lang === "ru" ? "Обед" : "Tushlik")
+        : (lang === "ru" ? "Прочее" : "Boshqa");
 
       const logMsg = lang === "ru"
-        ? `Возврат (возмещение): ${shop.name} | ${qty} шт ${eggName}${returnComment ? ` — ${returnComment}` : ""}`
-        : `Qaytarish (o'rnini bosish): ${shop.name} | ${qty} dona ${eggName}${returnComment ? ` — ${returnComment}` : ""}`;
+        ? `Расход: ${catLabel} | ${formatSum(amount, "ru")}${expenseComment ? ` — ${expenseComment}` : ""}`
+        : `Xarajat: ${catLabel} | ${formatSum(amount, "uz")}${expenseComment ? ` — ${expenseComment}` : ""}`;
 
       await addActivityLog({
         timestamp: new Date().toISOString(),
         operationDate: new Date().toISOString(),
-        type: "return",
+        type: "expense",
         message: logMsg,
-        eggType: returnEggType,
-        qtyPieces: qty,
-        amount: 0,
+        amount,
+        expenseCategory,
+        comment: expenseComment || "",
         operator: `${username} (доставщик)`,
         operatorUsername: username,
-        shopId: shop.id,
-        comment: returnComment || "",
       });
 
-      setIsReturnOpen(false);
+      setIsExpenseOpen(false);
       setConfirmResult({
-        title: lang === "ru" ? "Возврат оформлен" : "Qaytarish rasmiylashtirildi",
-        shopName: shop.name,
-        newDebt: shop.debt,
+        title: lang === "ru" ? "Расход записан" : "Xarajat yozildi",
+        shopName: catLabel,
+        newDebt: 0,
+        hideDebt: true,
         lines: [
-          { label: lang === "ru" ? "Категория" : "Kategoriya", value: eggName, strong: true },
-          { label: lang === "ru" ? "Возвращено (шт)" : "Qaytarildi (dona)", value: String(qty) },
-          { label: lang === "ru" ? "Возмещение" : "O'rnini bosish", value: lang === "ru" ? "той же категорией" : "shu kategoriya bilan" },
+          { label: lang === "ru" ? "Сумма" : "Summa", value: formatSum(amount, lang), strong: true },
+          { label: lang === "ru" ? "Категория" : "Kategoriya", value: catLabel },
+          ...(expenseComment ? [{ label: lang === "ru" ? "Комментарий" : "Izoh", value: expenseComment }] : []),
         ],
       });
-      setReturnEggType("c0");
-      setReturnQty(0);
-      setReturnComment("");
-      setSelectedShopId("");
+      setExpenseAmount(0);
+      setExpenseCategory("lunch");
+      setExpenseComment("");
       await loadData();
     } catch (err) {
-      showToast(lang === "ru" ? "Ошибка при оформлении возврата" : "Qaytarishda xatolik", "error");
+      showToast(lang === "ru" ? "Ошибка при записи расхода" : "Xarajatni yozishda xatolik", "error");
     }
   };
 
@@ -694,14 +730,16 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
                   <span className={`font-mono ${l.strong ? "font-extrabold text-slate-900" : "font-semibold text-slate-700"}`}>{l.value}</span>
                 </div>
               ))}
-              <div className={`mt-1 flex justify-between items-center rounded-lg px-3.5 py-3 border ${confirmResult.newDebt > 0 ? "bg-red-50 border-red-100" : "bg-emerald-50 border-emerald-100"}`}>
-                <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                  {confirmResult.newDebt >= 0 ? (lang === "ru" ? "Новый долг магазина" : "Do'konning yangi qarzi") : (lang === "ru" ? "Аванс магазина" : "Do'kon avansi")}
-                </span>
-                <span className={`font-mono font-extrabold text-lg ${confirmResult.newDebt > 0 ? "text-red-600" : "text-emerald-600"}`}>
-                  {formatSum(Math.abs(confirmResult.newDebt), lang)}
-                </span>
-              </div>
+              {!confirmResult.hideDebt && (
+                <div className={`mt-1 flex justify-between items-center rounded-lg px-3.5 py-3 border ${confirmResult.newDebt > 0 ? "bg-red-50 border-red-100" : "bg-emerald-50 border-emerald-100"}`}>
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                    {confirmResult.newDebt >= 0 ? (lang === "ru" ? "Новый долг магазина" : "Do'konning yangi qarzi") : (lang === "ru" ? "Аванс магазина" : "Do'kon avansi")}
+                  </span>
+                  <span className={`font-mono font-extrabold text-lg ${confirmResult.newDebt > 0 ? "text-red-600" : "text-emerald-600"}`}>
+                    {formatSum(Math.abs(confirmResult.newDebt), lang)}
+                  </span>
+                </div>
+              )}
               <button
                 type="button"
                 onClick={() => setConfirmResult(null)}
@@ -815,7 +853,7 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
                   onClick={() => {
                     setIsCollectOpen(true);
                     setIsSaleOpen(false);
-                    setIsReturnOpen(false);
+                    setIsExpenseOpen(false);
                   }}
                   className="bg-slate-900 text-white p-4 rounded-xl border border-slate-800 shadow-sm flex flex-col items-center justify-center text-center gap-1.5 hover:bg-slate-800 cursor-pointer transition-colors"
                 >
@@ -827,7 +865,7 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
                   onClick={() => {
                     setIsSaleOpen(true);
                     setIsCollectOpen(false);
-                    setIsReturnOpen(false);
+                    setIsExpenseOpen(false);
                   }}
                   className="bg-white text-slate-900 p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center justify-center text-center gap-1.5 hover:bg-slate-50 cursor-pointer transition-colors"
                 >
@@ -837,14 +875,14 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
 
                 <button
                   onClick={() => {
-                    setIsReturnOpen(true);
+                    setIsExpenseOpen(true);
                     setIsSaleOpen(false);
                     setIsCollectOpen(false);
                   }}
                   className="bg-white text-slate-900 p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col items-center justify-center text-center gap-1.5 hover:bg-slate-50 cursor-pointer transition-colors"
                 >
-                  <RotateCcw className="w-5 h-5 text-orange-500" />
-                  <span className="text-[11px] font-bold">{lang === "ru" ? "Возврат" : "Qaytarish"}</span>
+                  <Wallet className="w-5 h-5 text-rose-500" />
+                  <span className="text-[11px] font-bold">{lang === "ru" ? "Расходы" : "Xarajatlar"}</span>
                 </button>
               </div>
 
@@ -1007,11 +1045,13 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
                       <div 
                         key={log.id} 
                         className={`p-3.5 rounded-xl border transition-all ${
-                          log.isCancelled 
-                            ? "bg-slate-50 border-slate-150 opacity-60" 
-                            : log.type === "payment" && !log.qty
-                              ? "bg-emerald-50/50 border-emerald-100" 
-                              : "bg-amber-50/50 border-amber-100"
+                          log.isCancelled
+                            ? "bg-slate-50 border-slate-150 opacity-60"
+                            : log.type === "expense"
+                              ? "bg-rose-50/50 border-rose-100"
+                              : log.type === "payment" && !log.qty
+                                ? "bg-emerald-50/50 border-emerald-100"
+                                : "bg-amber-50/50 border-amber-100"
                         }`}
                       >
                         <div className="flex justify-between items-start">
@@ -1022,17 +1062,21 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
                                   ? "bg-slate-200 text-slate-600"
                                   : log.type === "return"
                                     ? "bg-orange-100 text-orange-800"
-                                    : log.type === "payment" && !log.qty
-                                      ? "bg-emerald-100 text-emerald-800"
-                                      : "bg-amber-100 text-amber-800"
+                                    : log.type === "expense"
+                                      ? "bg-rose-100 text-rose-800"
+                                      : log.type === "payment" && !log.qty
+                                        ? "bg-emerald-100 text-emerald-800"
+                                        : "bg-amber-100 text-amber-800"
                               }`}>
                                 {log.isCancelled
                                   ? (lang === "ru" ? "Отменено" : "Bekor qilingan")
                                   : log.type === "return"
                                     ? (lang === "ru" ? "Возврат" : "Qaytarish")
-                                    : log.type === "payment" && !log.qty
-                                      ? (lang === "ru" ? "Оплата" : "To'lov")
-                                      : (lang === "ru" ? "Продажа" : "Sotuv")}
+                                    : log.type === "expense"
+                                      ? (lang === "ru" ? "Расход" : "Xarajat")
+                                      : log.type === "payment" && !log.qty
+                                        ? (lang === "ru" ? "Оплата" : "To'lov")
+                                        : (lang === "ru" ? "Продажа" : "Sotuv")}
                               </span>
 
                               {log.isEdited && (
@@ -1056,8 +1100,10 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
                           </div>
 
                           <div className="text-right flex flex-col items-end gap-1 shrink-0">
-                            <span className="font-mono font-bold text-xs text-slate-900">
-                              {log.type === "return" ? `${log.qtyPieces ?? 0} ${lang === "ru" ? "шт" : "dona"}` : `${log.amount?.toLocaleString()} сум`}
+                            <span className={`font-mono font-bold text-xs ${log.type === "expense" ? "text-rose-600" : "text-slate-900"}`}>
+                              {log.type === "return"
+                                ? `${log.qtyPieces ?? 0} ${lang === "ru" ? "шт" : "dona"}`
+                                : `${log.type === "expense" ? "-" : ""}${log.amount?.toLocaleString()} сум`}
                             </span>
 
                             {/* Action Buttons: Edit & Cancel (within 24 hrs) */}
@@ -1106,67 +1152,66 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
             </div>
           )}
 
-          {/* Collapsible Action Modal: Collect Payment */}
-          {/* Возврат-возмещение (строго по штукам) */}
-          {isReturnOpen && (
+          {/* Каждодневные расходы (обед / прочее) */}
+          {isExpenseOpen && (
             <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in-50">
               <div className="bg-white w-full max-w-md rounded-t-2xl sm:rounded-2xl border-t sm:border border-slate-200 overflow-hidden shadow-2xl animate-in slide-in-from-bottom-24">
                 <div className="bg-slate-900 p-4 text-white flex justify-between items-center border-b border-slate-800">
                   <div className="flex items-center gap-2">
-                    <RotateCcw className="w-5 h-5 text-orange-400" />
-                    <span className="font-bold text-sm">{lang === "ru" ? "Возврат (возмещение)" : "Qaytarish (o'rnini bosish)"}</span>
+                    <Wallet className="w-5 h-5 text-rose-400" />
+                    <span className="font-bold text-sm">{lang === "ru" ? "Каждодневные расходы" : "Kundalik xarajatlar"}</span>
                   </div>
-                  <button onClick={() => setIsReturnOpen(false)} className="text-slate-400 hover:text-white transition-colors cursor-pointer">
+                  <button onClick={() => setIsExpenseOpen(false)} className="text-slate-400 hover:text-white transition-colors cursor-pointer">
                     <X className="w-5 h-5" />
                   </button>
                 </div>
 
-                <form onSubmit={handleReturnSubmit} className="p-5 flex flex-col gap-4">
-                  <div className="bg-orange-50 border border-orange-100 text-orange-800 rounded-lg px-3 py-2 text-[11px] leading-snug">
+                <form onSubmit={handleExpenseSubmit} className="p-5 flex flex-col gap-4">
+                  <div className="bg-rose-50 border border-rose-100 text-rose-800 rounded-lg px-3 py-2 text-[11px] leading-snug">
                     {lang === "ru"
-                      ? "Возврат = возмещение той же категорией, строго по штукам. Деньги не возвращаются, долг не меняется."
-                      : "Qaytarish = shu kategoriya bilan o'rnini bosish, faqat donada. Pul qaytarilmaydi, qarz o'zgarmaydi."}
+                      ? "Расход попадёт в ваш дневной отчёт: в конце дня считается доход − расход. Долги магазинов не меняются."
+                      : "Xarajat kunlik hisobotingizga tushadi: kun oxirida daromad − xarajat hisoblanadi. Do'kon qarzlari o'zgarmaydi."}
                   </div>
 
-                  {/* Shop */}
+                  {/* Category: lunch / other */}
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{t.selectShop}</label>
-                    <select
-                      value={selectedShopId}
-                      onChange={(e) => setSelectedShopId(e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-semibold focus:outline-none focus:border-amber-400 bg-white"
-                      required
-                    >
-                      <option value="">-- {lang === "ru" ? "Выбрать" : "Tanlash"} --</option>
-                      {shops.map(s => (
-                        <option key={s.id} value={s.id}>{s.name}</option>
-                      ))}
-                    </select>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{lang === "ru" ? "Категория расхода" : "Xarajat turi"}</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setExpenseCategory("lunch")}
+                        className={`py-2.5 rounded-lg border text-[11px] font-bold uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                          expenseCategory === "lunch"
+                            ? "bg-slate-900 border-slate-800 text-amber-400"
+                            : "bg-white border-slate-200 text-slate-600"
+                        }`}
+                      >
+                        <UtensilsCrossed className="w-4 h-4" />
+                        {lang === "ru" ? "Обед" : "Tushlik"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setExpenseCategory("other")}
+                        className={`py-2.5 rounded-lg border text-[11px] font-bold uppercase tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                          expenseCategory === "other"
+                            ? "bg-slate-900 border-slate-800 text-amber-400"
+                            : "bg-white border-slate-200 text-slate-600"
+                        }`}
+                      >
+                        <Wallet className="w-4 h-4" />
+                        {lang === "ru" ? "Другое" : "Boshqa"}
+                      </button>
+                    </div>
                   </div>
 
-                  {/* Egg category */}
+                  {/* Amount */}
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{lang === "ru" ? "Категория яиц" : "Tuxum kategoriyasi"}</label>
-                    <select
-                      value={returnEggType}
-                      onChange={(e) => setReturnEggType(e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-semibold focus:outline-none focus:border-amber-400 bg-white"
-                      required
-                    >
-                      {eggTypes.map(eg => (
-                        <option key={eg.id} value={eg.id}>{lang === "ru" ? eg.nameRu : eg.nameUz}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Quantity in pieces (strictly) */}
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{lang === "ru" ? "Количество (штук)" : "Miqdori (dona)"}</label>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{lang === "ru" ? "Сумма расхода (сум)" : "Xarajat summasi (so'm)"}</label>
                     <input
-                      type="number" min="1" step="1" inputMode="numeric"
-                      placeholder={lang === "ru" ? "Сколько штук возместить" : "Necha dona"}
-                      value={returnQty || ""}
-                      onChange={(e) => setReturnQty(Math.max(0, Math.floor(Number(e.target.value))))}
+                      type="number" min="1" inputMode="numeric"
+                      placeholder={lang === "ru" ? "Например: 25 000" : "Masalan: 25 000"}
+                      value={expenseAmount || ""}
+                      onChange={(e) => setExpenseAmount(Math.max(0, Number(e.target.value)))}
                       className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm font-bold focus:outline-none focus:border-amber-400 font-mono"
                       required
                     />
@@ -1177,20 +1222,20 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
                     <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{lang === "ru" ? "Комментарий (необязательно)" : "Izoh (ixtiyoriy)"}</label>
                     <input
                       type="text"
-                      placeholder={lang === "ru" ? "Например: бой при доставке" : "Masalan: yetkazishda siniq"}
-                      value={returnComment}
-                      onChange={(e) => setReturnComment(e.target.value)}
+                      placeholder={lang === "ru" ? "Например: обед в кафе, бензин" : "Masalan: kafeda tushlik, benzin"}
+                      value={expenseComment}
+                      onChange={(e) => setExpenseComment(e.target.value)}
                       className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-semibold focus:outline-none focus:border-amber-400 bg-white"
                     />
                   </div>
 
                   <div className="flex gap-3 mt-1">
-                    <button type="button" onClick={() => setIsReturnOpen(false)} className="flex-1 py-2 rounded-lg border border-slate-200 text-slate-500 font-bold text-xs hover:bg-slate-50 transition-all cursor-pointer">
+                    <button type="button" onClick={() => setIsExpenseOpen(false)} className="flex-1 py-2 rounded-lg border border-slate-200 text-slate-500 font-bold text-xs hover:bg-slate-50 transition-all cursor-pointer">
                       {lang === "ru" ? "Отмена" : "Bekor"}
                     </button>
-                    <button type="submit" className="flex-1 py-2 rounded-lg bg-orange-500 hover:bg-orange-600 text-white font-bold text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5">
-                      <RotateCcw className="w-4 h-4" />
-                      {lang === "ru" ? "Оформить возврат" : "Qaytarishni rasmiylashtirish"}
+                    <button type="submit" className="flex-1 py-2 rounded-lg bg-rose-500 hover:bg-rose-600 text-white font-bold text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5">
+                      <Wallet className="w-4 h-4" />
+                      {lang === "ru" ? "Записать расход" : "Xarajatni yozish"}
                     </button>
                   </div>
                 </form>
@@ -1580,6 +1625,65 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
                           </button>
                         ))}
                       </div>
+                    </div>
+                  )}
+
+                  {/* Возврат (бой/брак) сразу при оформлении заказа — по штукам */}
+                  {!saleReturnOpen ? (
+                    <button
+                      type="button"
+                      onClick={() => setSaleReturnOpen(true)}
+                      className="py-2 rounded-lg border border-dashed border-orange-300 bg-orange-50/50 text-orange-700 font-bold text-[11px] hover:bg-orange-50 transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      {lang === "ru" ? "+ Добавить возврат (бой/брак)" : "+ Qaytarish qo'shish (siniq)"}
+                    </button>
+                  ) : (
+                    <div className="bg-orange-50/60 border border-orange-200 rounded-lg p-3 flex flex-col gap-2.5 animate-in slide-in-from-top-2">
+                      <div className="flex items-center justify-between">
+                        <p className="text-[11px] font-bold text-orange-800 flex items-center gap-1.5">
+                          <RotateCcw className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                          {lang === "ru" ? "Возврат (возмещение по штукам)" : "Qaytarish (donada o'rnini bosish)"}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => { setSaleReturnOpen(false); setReturnQty(0); setReturnComment(""); }}
+                          className="text-orange-400 hover:text-orange-600 cursor-pointer"
+                          title={lang === "ru" ? "Убрать возврат" : "Qaytarishni olib tashlash"}
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <p className="text-[10px] text-orange-700/80 leading-snug">
+                        {lang === "ru"
+                          ? "Возмещение той же категорией, деньги не возвращаются, долг не меняется."
+                          : "Shu kategoriya bilan o'rnini bosish, pul qaytarilmaydi, qarz o'zgarmaydi."}
+                      </p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <select
+                          value={returnEggType}
+                          onChange={(e) => setReturnEggType(e.target.value)}
+                          className="w-full px-2 py-1.5 rounded border border-slate-200 text-xs font-semibold bg-white focus:outline-none focus:border-amber-400"
+                        >
+                          {(eggTypes.length > 0 ? eggTypes : [{ id: "c0", nameRu: "C0", nameUz: "C0" }]).map((eg: any) => (
+                            <option key={eg.id} value={eg.id}>{lang === "ru" ? eg.nameRu : eg.nameUz}</option>
+                          ))}
+                        </select>
+                        <input
+                          type="number" min="0" step="1" inputMode="numeric"
+                          placeholder={lang === "ru" ? "Штук" : "Dona"}
+                          value={returnQty || ""}
+                          onChange={(e) => setReturnQty(Math.max(0, Math.floor(Number(e.target.value))))}
+                          className="w-full px-3 py-1.5 rounded border border-slate-200 text-xs font-bold focus:outline-none focus:border-amber-400 font-mono"
+                        />
+                      </div>
+                      <input
+                        type="text"
+                        placeholder={lang === "ru" ? "Комментарий (например: бой при доставке)" : "Izoh (masalan: yetkazishda siniq)"}
+                        value={returnComment}
+                        onChange={(e) => setReturnComment(e.target.value)}
+                        className="w-full px-2.5 py-1.5 rounded border border-slate-200 text-xs font-medium focus:outline-none focus:border-amber-400 bg-white"
+                      />
                     </div>
                   )}
 

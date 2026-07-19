@@ -11,7 +11,7 @@ from django.utils.dateparse import parse_datetime
 from rest_framework.exceptions import PermissionDenied
 
 from catalog.models import Shop
-from operations.models import ActivityLog, Adjustment, Payment, Return, Sale, SaleItem
+from operations.models import ActivityLog, Adjustment, Expense, Payment, Return, Sale, SaleItem
 
 # Доставщик может исправлять/аннулировать операцию только в течение суток (ТЗ п.5).
 EDIT_WINDOW = timedelta(hours=24)
@@ -158,6 +158,25 @@ def return_to_log(r: Return):
     }
 
 
+def expense_to_log(e: Expense):
+    return {
+        "id": f"expense-{e.pk}",
+        "type": "expense",
+        "timestamp": iso(e.created_at),
+        "operationDate": iso(e.operation_date),
+        "shopId": None,  # расход не привязан к магазину и не влияет на долги
+        "amount": num(e.amount),
+        "expenseCategory": e.category,
+        "comment": e.comment,
+        "operator": _operator_label(e.deliverer),
+        "operatorUsername": _operator_username(e.deliverer),
+        "operatorId": _operator_id(e.deliverer),
+        "message": e.message,
+        "isCancelled": e.is_cancelled,
+        "isEdited": e.is_edited,
+    }
+
+
 def adjustment_to_log(a: Adjustment):
     return {
         "id": f"adj-{a.pk}",
@@ -199,6 +218,7 @@ def all_logs():
     logs += [sale_to_log(s) for s in Sale.objects.select_related("shop", "deliverer").prefetch_related("items__egg_type")]
     logs += [payment_to_log(p) for p in Payment.objects.select_related("shop", "operator")]
     logs += [return_to_log(r) for r in Return.objects.select_related("shop", "deliverer", "egg_type")]
+    logs += [expense_to_log(e) for e in Expense.objects.select_related("deliverer")]
     logs += [adjustment_to_log(a) for a in Adjustment.objects.select_related("shop", "operator")]
     logs += [activity_to_log(al) for al in ActivityLog.objects.select_related("user", "shop")]
     logs.sort(key=lambda x: x["timestamp"] or "", reverse=True)
@@ -263,6 +283,18 @@ def create_operation(user, data):
             message=data.get("message", "") or "",
         )
         return return_to_log(r)
+
+    # Каждодневный расход доставщика (обед и т.п.) — без магазина, долги не меняет
+    if op_type == "expense" and float(data.get("amount", 0) or 0) > 0:
+        e = Expense.objects.create(
+            deliverer=user,
+            amount=Decimal(str(data.get("amount", 0))),
+            category=data.get("expenseCategory") if data.get("expenseCategory") in ("lunch", "other") else "other",
+            operation_date=parse_dt(data.get("operationDate")),
+            comment=data.get("comment", "") or "",
+            message=data.get("message", "") or "",
+        )
+        return expense_to_log(e)
 
     # Корректировка (± с причиной) — прямое изменение долга, только администратор
     # (ТЗ п.3.2/5.1). Иначе доставщик мог бы менять долг магазина через API.
@@ -341,6 +373,21 @@ def update_operation(op_id, data, user):
             obj.cancelled_at = timezone.now()
         obj.save()
         return return_to_log(obj)
+
+    if kind == "expense":
+        obj = Expense.objects.filter(pk=pk).first()
+        if not obj:
+            return None
+        _guard_deliverer_edit(obj, obj.deliverer, user)
+        if "amount" in data:
+            obj.amount = Decimal(str(data["amount"]))
+        apply_common(obj)
+        if data.get("isCancelled"):
+            obj.is_cancelled = True
+            obj.cancelled_by = user
+            obj.cancelled_at = timezone.now()
+        obj.save()
+        return expense_to_log(obj)
 
     if kind == "adj":
         obj = Adjustment.objects.filter(pk=pk).first()

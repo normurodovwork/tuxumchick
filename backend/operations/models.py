@@ -184,6 +184,51 @@ class Return(models.Model):
         return f"Возврат #{self.pk} — {self.shop.name} ({self.quantity} шт {self.egg_type.name_ru})"
 
 
+class Expense(models.Model):
+    """
+    Каждодневный расход доставщика (обед, топливо и т.п.).
+    Не привязан к магазину и не влияет на долги — учитывается в итогах дня
+    доставщика: доход − расход. Категория «Обед» выделена отдельно,
+    прочие расходы описываются комментарием.
+    """
+
+    class Category(models.TextChoices):
+        LUNCH = "lunch", "Обед"
+        OTHER = "other", "Прочее"
+
+    deliverer = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="expenses", verbose_name="Доставщик",
+    )
+    amount = models.DecimalField("Сумма расхода", max_digits=14, decimal_places=2)
+    category = models.CharField("Категория", max_length=8, choices=Category.choices, default=Category.OTHER)
+
+    operation_date = models.DateTimeField("Дата расхода", default=timezone.now)
+    comment = models.CharField("Комментарий", max_length=300, blank=True)
+    message = models.TextField("Описание", blank=True)
+    is_edited = models.BooleanField("Изменена", default=False)
+
+    is_cancelled = models.BooleanField("Аннулирована", default=False)
+    cancelled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="cancelled_expenses", verbose_name="Аннулировал",
+    )
+    cancelled_at = models.DateTimeField("Дата аннулирования", null=True, blank=True)
+
+    created_at = models.DateTimeField("Создана", auto_now_add=True)
+
+    objects = CancellableQuerySet.as_manager()
+
+    class Meta:
+        db_table = "expenses"
+        verbose_name = "Расход доставщика"
+        verbose_name_plural = "Расходы доставщиков"
+        ordering = ["-operation_date"]
+
+    def __str__(self) -> str:
+        who = self.deliverer.full_name or self.deliverer.username
+        return f"Расход #{self.pk} — {who} ({self.amount} сум, {self.get_category_display()})"
+
+
 class Adjustment(models.Model):
     """Корректировка долга (только админ): сумма ± и причина (ТЗ п.3.2/5.1)."""
 

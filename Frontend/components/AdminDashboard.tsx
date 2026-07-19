@@ -68,7 +68,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
   const [shopShowArchived, setShopShowArchived] = useState(false);
 
   const [opFilterPeriod, setOpFilterPeriod] = useState<"all" | "today" | "yesterday">("all");
-  const [opFilterType, setOpFilterType] = useState<"all" | "sale" | "payment">("all");
+  const [opFilterType, setOpFilterType] = useState<"all" | "sale" | "payment" | "expense">("all");
   const [opFilterOperator, setOpFilterOperator] = useState<string>("all");
   const [opSearchQuery, setOpSearchQuery] = useState("");
   // Просмотр деталей операции по клику (П4)
@@ -857,7 +857,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
     const start = reportStart ? new Date(reportStart + "T00:00:00") : null;
     const end = reportEnd ? new Date(reportEnd + "T23:59:59") : null;
     return activityLogs.filter(l => {
-      if (l.type !== "sale" && l.type !== "payment" && l.type !== "adjustment") return false;
+      if (l.type !== "sale" && l.type !== "payment" && l.type !== "adjustment" && l.type !== "expense") return false;
       const when = l.operationDate || l.timestamp;
       if (!when) return false;
       const d = new Date(when);
@@ -870,7 +870,11 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
   const opTypeLabel = (l: any) =>
     l.type === "sale" ? (lang === "ru" ? "Продажа" : "Sotuv")
       : l.type === "payment" ? (lang === "ru" ? "Оплата" : "To'lov")
-        : (lang === "ru" ? "Корректировка" : "Tuzatish");
+        : l.type === "expense" ? (lang === "ru" ? "Расход" : "Xarajat")
+          : (lang === "ru" ? "Корректировка" : "Tuzatish");
+
+  const expenseCategoryLabel = (l: any) =>
+    l.expenseCategory === "lunch" ? (lang === "ru" ? "Обед" : "Tushlik") : (lang === "ru" ? "Прочее" : "Boshqa");
 
   const shopNameById = (id: string) => shops.find(s => s.id === id)?.name || id || "—";
 
@@ -899,14 +903,16 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
     const rows = opsInPeriod()
       .sort((a, b) => new Date(a.operationDate || a.timestamp).getTime() - new Date(b.operationDate || b.timestamp).getTime())
       .map(l => {
-        const items = Array.isArray(l.items) ? l.items.map((i: any) => `${i.qty} ${i.qtyType === "boxes" ? (lang === "ru" ? "кор." : "quti") : (lang === "ru" ? "лотк." : "lagan")} ${lang === "ru" ? i.nameRu : i.nameUz}`).join("; ") : "";
+        const items = l.type === "expense"
+          ? `${expenseCategoryLabel(l)}${l.comment ? ` — ${l.comment}` : ""}`
+          : Array.isArray(l.items) ? l.items.map((i: any) => `${i.qty} ${i.qtyType === "boxes" ? (lang === "ru" ? "кор." : "quti") : (lang === "ru" ? "лотк." : "lagan")} ${lang === "ru" ? i.nameRu : i.nameUz}`).join("; ") : "";
         return [
           new Date(l.operationDate || l.timestamp).toLocaleString(),
           opTypeLabel(l),
           l.operator || "—",
-          l.shopName || shopNameById(l.shopId),
+          l.type === "expense" ? "—" : (l.shopName || shopNameById(l.shopId)),
           items,
-          l.type === "sale" ? Math.round(l.total ?? l.amount ?? 0) : "",
+          l.type === "sale" ? Math.round(l.total ?? l.amount ?? 0) : (l.type === "expense" ? -Math.round(l.amount || 0) : ""),
           l.type === "sale" ? Math.round(l.received ?? 0) : (l.type === "payment" ? Math.round(l.amount || 0) : ""),
           Math.round(ledgerDelta(l)),
           l.isCancelled ? (lang === "ru" ? "АННУЛИРОВАНО" : "BEKOR") : "",
@@ -920,7 +926,10 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
   };
 
   // Отчёт в формате заказчика (колонки как в присланном Excel):
-  // SHAFYOR·SANA·DOKON NOMI·KATEGORIYA·POCHKA·DONA·SINIQ·NARX·SUMMA·NAXT·QARZ·KLIK·PERECHESLENIYA·ESKIQARZ
+  // SHAFYOR·SANA·DOKON NOMI·KATEGORIYA·POCHKA·DONA·SINIQ·NARX·SUMMA·NAXT·QARZ·KLIK·PERECHESLENIYA·ESKIQARZ·RASXOD·IZOH
+  // Операции сгруппированы по дням и агентам. После каждого агента за день —
+  // итоги: нал, весь доход, расходы и «доход − расход». В самом конце —
+  // общий итог за период (доход − расход).
   const reportCustomerFormat = () => {
     const eggsPerTray = settings?.eggsPerTray || 30;
     const start = reportStart ? new Date(reportStart + "T00:00:00") : null;
@@ -934,7 +943,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
       return true;
     };
     const logs = activityLogs
-      .filter(l => !l.isCancelled && inRange(l) && (l.type === "sale" || l.type === "payment" || l.type === "return"))
+      .filter(l => !l.isCancelled && inRange(l) && (l.type === "sale" || l.type === "payment" || l.type === "return" || l.type === "expense"))
       .sort((a, b) => new Date(a.operationDate || a.timestamp).getTime() - new Date(b.operationDate || b.timestamp).getTime());
 
     const dateStr = (l: any) => new Date(l.operationDate || l.timestamp).toLocaleDateString("ru-RU");
@@ -944,48 +953,103 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
       perech: pt === "transfer" ? amt : "",
     });
 
-    const rows: (string | number)[][] = [];
+    // Группировка: день → агент (в порядке появления операций)
+    const dayKeys: string[] = [];
+    const days: Record<string, { agentKeys: string[]; agents: Record<string, any[]> }> = {};
     for (const l of logs) {
-      const shop = shops.find(s => s.id === l.shopId);
-      const eski = shop ? Math.round(shop.openingDebt || 0) : "";
-      const dokon = l.shopName || shopNameById(l.shopId);
-      if (l.type === "sale") {
-        const items = Array.isArray(l.items) ? l.items : [];
-        if (items.length === 0) {
-          const pc = pay(l.paymentType, Math.round(l.received || 0));
-          rows.push([l.operator || "", dateStr(l), dokon, "", "", "", "", "", Math.round(l.total || 0), pc.naxt, Math.round((l.total || 0) - (l.received || 0)), pc.klik, pc.perech, eski]);
+      const dk = dateStr(l);
+      if (!days[dk]) { days[dk] = { agentKeys: [], agents: {} }; dayKeys.push(dk); }
+      const ak = l.operator || "—";
+      if (!days[dk].agents[ak]) { days[dk].agents[ak] = []; days[dk].agentKeys.push(ak); }
+      days[dk].agents[ak].push(l);
+    }
+
+    const rows: (string | number)[][] = [];
+    const BLANK = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""];
+    let grandCash = 0, grandIncome = 0, grandExpense = 0;
+
+    for (const dk of dayKeys) {
+      for (const ak of days[dk].agentKeys) {
+        let dayCash = 0, dayCard = 0, dayTransfer = 0, dayIncome = 0, dayExpense = 0;
+
+        for (const l of days[dk].agents[ak]) {
+          const shop = shops.find(s => s.id === l.shopId);
+          const eski = shop ? Math.round(shop.openingDebt || 0) : "";
+          const dokon = l.shopName || shopNameById(l.shopId);
+
+          if (l.type === "sale") {
+            const rec = Math.round(l.received || 0);
+            dayIncome += rec;
+            if (rec > 0) {
+              if (l.paymentType === "card") dayCard += rec;
+              else if (l.paymentType === "transfer") dayTransfer += rec;
+              else dayCash += rec;
+            }
+            const items = Array.isArray(l.items) ? l.items : [];
+            if (items.length === 0) {
+              const pc = pay(l.paymentType, rec);
+              rows.push([ak, dk, dokon, "", "", "", "", "", Math.round(l.total || 0), pc.naxt, Math.round((l.total || 0) - (l.received || 0)), pc.klik, pc.perech, eski, "", ""]);
+            }
+            items.forEach((it: any, idx: number) => {
+              const trays = it.trays || 0;
+              const first = idx === 0;
+              const pc = first ? pay(l.paymentType, rec) : { naxt: "", klik: "", perech: "" };
+              rows.push([
+                ak,                                                // SHAFYOR
+                dk,                                                // SANA
+                dokon,                                             // DOKON NOMI
+                lang === "ru" ? it.nameRu : (it.nameUz || it.nameRu), // KATEGORIYA
+                Math.round(trays),                                 // POCHKA (лотки)
+                Math.round(trays * eggsPerTray),                   // DONA (штуки)
+                "",                                               // SINIQ
+                Math.round(it.pricePerTray || 0),                  // NARX
+                Math.round(it.lineTotal || 0),                     // SUMMA
+                pc.naxt,                                           // NAXT
+                first ? Math.round((l.total || 0) - (l.received || 0)) : "", // QARZ
+                pc.klik,                                            // KLIK
+                pc.perech,                                          // PERECHESLENIYA
+                first ? eski : "",                                 // ESKIQARZ
+                "",                                               // RASXOD
+                "",                                               // IZOH
+              ]);
+            });
+          } else if (l.type === "payment") {
+            const amt = Math.round(l.amount || 0);
+            dayIncome += amt;
+            if (l.paymentType === "card") dayCard += amt;
+            else if (l.paymentType === "transfer") dayTransfer += amt;
+            else dayCash += amt;
+            const pc = pay(l.paymentType, amt);
+            rows.push([ak, dk, dokon, "", "", "", "", "", "", pc.naxt, "", pc.klik, pc.perech, eski, "", l.comment || ""]);
+          } else if (l.type === "return") {
+            rows.push([ak, dk, dokon, lang === "ru" ? l.eggNameRu : (l.eggNameUz || l.eggNameRu), "", "", l.qtyPieces || 0, "", "", "", "", "", "", eski, "", l.comment || ""]);
+          } else if (l.type === "expense") {
+            const amt = Math.round(l.amount || 0);
+            dayExpense += amt;
+            rows.push([ak, dk, "XARAJAT (расход)", "", "", "", "", "", "", "", "", "", "", "", amt,
+              `${expenseCategoryLabel(l)}${l.comment ? ` — ${l.comment}` : ""}`]);
+          }
         }
-        items.forEach((it: any, idx: number) => {
-          const trays = it.trays || 0;
-          const first = idx === 0;
-          const pc = first ? pay(l.paymentType, Math.round(l.received || 0)) : { naxt: "", klik: "", perech: "" };
-          rows.push([
-            l.operator || "",                                  // SHAFYOR
-            dateStr(l),                                        // SANA
-            dokon,                                             // DOKON NOMI
-            lang === "ru" ? it.nameRu : (it.nameUz || it.nameRu), // KATEGORIYA
-            Math.round(trays),                                 // POCHKA (лотки)
-            Math.round(trays * eggsPerTray),                   // DONA (штуки)
-            "",                                               // SINIQ
-            Math.round(it.pricePerTray || 0),                  // NARX
-            Math.round(it.lineTotal || 0),                     // SUMMA
-            pc.naxt,                                           // NAXT
-            first ? Math.round((l.total || 0) - (l.received || 0)) : "", // QARZ
-            pc.klik,                                            // KLIK
-            pc.perech,                                          // PERECHESLENIYA
-            first ? eski : "",                                 // ESKIQARZ
-          ]);
-        });
-      } else if (l.type === "payment") {
-        const pc = pay(l.paymentType, Math.round(l.amount || 0));
-        rows.push([l.operator || "", dateStr(l), dokon, "", "", "", "", "", "", pc.naxt, "", pc.klik, pc.perech, eski]);
-      } else if (l.type === "return") {
-        rows.push([l.operator || "", dateStr(l), dokon, lang === "ru" ? l.eggNameRu : (l.eggNameUz || l.eggNameRu), "", "", l.qtyPieces || 0, "", "", "", "", "", "", eski]);
+
+        grandCash += dayCash; grandIncome += dayIncome; grandExpense += dayExpense;
+
+        // Итоги агента за день: нал / доход / расход / доход − расход
+        rows.push([ak, dk, "JAMI NAXT (нал за день)", "", "", "", "", "", "", dayCash, "", dayCard || "", dayTransfer || "", "", "", ""]);
+        rows.push([ak, dk, "JAMI DAROMAD (доход за день)", "", "", "", "", "", dayIncome, "", "", "", "", "", "", ""]);
+        rows.push([ak, dk, "JAMI RASXOD (расход за день)", "", "", "", "", "", "", "", "", "", "", "", dayExpense, ""]);
+        rows.push([ak, dk, "KUN ITOGI: DAROMAD − RASXOD", "", "", "", "", "", dayIncome - dayExpense, "", "", "", "", "", "", ""]);
+        rows.push([...BLANK]);
       }
     }
 
+    // Общий итог за весь период (в самом конце отчёта)
+    rows.push(["UMUMIY (общий итог)", "", "NAXT (весь нал)", "", "", "", "", "", "", grandCash, "", "", "", "", "", ""]);
+    rows.push(["UMUMIY (общий итог)", "", "DAROMAD (весь доход)", "", "", "", "", "", grandIncome, "", "", "", "", "", "", ""]);
+    rows.push(["UMUMIY (общий итог)", "", "RASXOD (все расходы)", "", "", "", "", "", "", "", "", "", "", "", grandExpense, ""]);
+    rows.push(["UMUMIY (общий итог)", "", "ITOG: DAROMAD − RASXOD", "", "", "", "", "", grandIncome - grandExpense, "", "", "", "", "", "", ""]);
+
     downloadExcel("otchet", "Otchet",
-      ["SHAFYOR", "SANA", "DOKON NOMI", "KATEGORIYA", "POCHKA", "DONA", "SINIQ", "NARX", "SUMMA", "NAXT", "QARZ", "KLIK", "PERECHESLENIYA", "ESKIQARZ"],
+      ["SHAFYOR", "SANA", "DOKON NOMI", "KATEGORIYA", "POCHKA", "DONA", "SINIQ", "NARX", "SUMMA", "NAXT", "QARZ", "KLIK", "PERECHESLENIYA", "ESKIQARZ", "RASXOD", "IZOH"],
       rows);
   };
 
@@ -1032,12 +1096,21 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
       const dl = opsInPeriod().filter(l => !l.isCancelled && String(l.operatorId ?? "") === String(d.id));
       const sold = dl.filter(l => l.type === "sale").reduce((s, l) => s + (l.total ?? l.amount ?? 0), 0);
       const collected = dl.reduce((s, l) => s + (l.type === "sale" ? (l.received || 0) : l.type === "payment" ? (l.amount || 0) : 0), 0);
+      // Только наличные (нал): продажи с оплатой cash + приёмы оплаты cash
+      const cash = dl.reduce((s, l) => {
+        if (l.type === "sale" && (l.received || 0) > 0 && l.paymentType === "cash") return s + (l.received || 0);
+        if (l.type === "payment" && l.paymentType === "cash") return s + (l.amount || 0);
+        return s;
+      }, 0);
+      const expenses = dl.filter(l => l.type === "expense").reduce((s, l) => s + (l.amount || 0), 0);
       const toDebt = dl.filter(l => l.type === "sale").reduce((s, l) => s + ((l.total ?? l.amount ?? 0) - (l.received || 0)), 0);
-      return [d.name, d.username || "—", dl.filter(l => l.type === "sale").length, Math.round(sold), Math.round(collected), Math.round(toDebt)];
+      return [d.name, d.username || "—", dl.filter(l => l.type === "sale").length,
+        Math.round(sold), Math.round(collected), Math.round(cash), Math.round(expenses),
+        Math.round(collected - expenses), Math.round(toDebt)];
     });
     downloadExcel("by_deliverer", lang === "ru" ? "По доставщику" : "Yetkazuvchi bo'yicha",
-      lang === "ru" ? ["Доставщик", "Логин", "Продаж", "Продано (сум)", "Собрано (сум)", "В долг (сум)"]
-        : ["Yetkazuvchi", "Login", "Sotuvlar", "Sotildi (so'm)", "Yig'ildi (so'm)", "Nasiya (so'm)"],
+      lang === "ru" ? ["Доставщик", "Логин", "Продаж", "Продано (сум)", "Собрано (сум)", "Наличными (сум)", "Расходы (сум)", "Итог: доход − расход", "В долг (сум)"]
+        : ["Yetkazuvchi", "Login", "Sotuvlar", "Sotildi (so'm)", "Yig'ildi (so'm)", "Naqd (so'm)", "Xarajatlar (so'm)", "Itog: daromad − xarajat", "Nasiya (so'm)"],
       rows);
   };
 
@@ -1266,10 +1339,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
       if (!msgMatch) return false;
 
       // 2. Type Match
-      if (opFilterType !== "all") {
-        if (opFilterType === "sale" && log.type !== "sale") return false;
-        if (opFilterType === "payment" && log.type !== "payment") return false;
-      }
+      if (opFilterType !== "all" && log.type !== opFilterType) return false;
 
       // 3. Operator Match — по стабильному id доставщика (П4/П5), не по имени
       if (opFilterOperator !== "all" && String(log.operatorId ?? "") !== String(opFilterOperator)) return false;
@@ -2083,6 +2153,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                         <option value="all">Все типы</option>
                         <option value="sale">Продажи (начисление долга)</option>
                         <option value="payment">Прием оплаты (погашение долга)</option>
+                        <option value="expense">Расходы доставщиков</option>
                       </select>
                     </div>
 
@@ -2151,8 +2222,8 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                                   </p>
                                 )}
                               </td>
-                              <td className="px-6 py-3.5 text-right font-mono font-bold text-slate-900">
-                                {log.type === "return" ? `${log.qtyPieces ?? 0} шт` : `${log.amount?.toLocaleString()} сум`}
+                              <td className={`px-6 py-3.5 text-right font-mono font-bold ${log.type === "expense" ? "text-rose-600" : "text-slate-900"}`}>
+                                {log.type === "return" ? `${log.qtyPieces ?? 0} шт` : `${log.type === "expense" ? "-" : ""}${log.amount?.toLocaleString()} сум`}
                               </td>
                               <td className="px-6 py-3.5 font-medium text-slate-600">{log.operator}</td>
                               <td className="px-6 py-3.5 text-center">
@@ -2161,11 +2232,13 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                                     ? "bg-slate-200 text-slate-600"
                                     : log.type === "return"
                                       ? "bg-orange-100 text-orange-800"
-                                      : log.type === "payment" && !log.qty
-                                        ? "bg-green-100 text-green-800"
-                                        : "bg-amber-100 text-amber-800"
+                                      : log.type === "expense"
+                                        ? "bg-rose-100 text-rose-800"
+                                        : log.type === "payment" && !log.qty
+                                          ? "bg-green-100 text-green-800"
+                                          : "bg-amber-100 text-amber-800"
                                 }`}>
-                                  {log.isCancelled ? "АННУЛИРОВАНО" : log.type === "return" ? "Возврат" : log.type === "payment" && !log.qty ? "Оплата" : "Продажа"}
+                                  {log.isCancelled ? "АННУЛИРОВАНО" : log.type === "return" ? "Возврат" : log.type === "expense" ? "Расход" : log.type === "payment" && !log.qty ? "Оплата" : "Продажа"}
                                 </span>
                               </td>
                               <td className="px-6 py-3.5 text-right">
@@ -2488,11 +2561,12 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
               return d.toDateString() === new Date().toDateString();
             };
             const ops = activityLogs
-              .filter(l => !l.isCancelled && String(l.operatorId ?? "") === String(reportDeliverer.id) && (l.type === "sale" || l.type === "payment" || l.type === "return"))
+              .filter(l => !l.isCancelled && String(l.operatorId ?? "") === String(reportDeliverer.id) && (l.type === "sale" || l.type === "payment" || l.type === "return" || l.type === "expense"))
               .filter(l => reportDelivererPeriod === "all" ? true : isToday(l));
             const sales = ops.filter(l => l.type === "sale");
             const sold = sales.reduce((s, l) => s + (l.total ?? l.amount ?? 0), 0);
-            const collected = ops.reduce((s, l) => s + (l.type === "sale" ? (l.received || 0) : (l.amount || 0)), 0);
+            const collected = ops.reduce((s, l) => s + (l.type === "sale" ? (l.received || 0) : l.type === "payment" ? (l.amount || 0) : 0), 0);
+            const expensesSum = ops.filter(l => l.type === "expense").reduce((s, l) => s + (l.amount || 0), 0);
             const toDebt = sales.reduce((s, l) => s + ((l.total ?? l.amount ?? 0) - (l.received || 0)), 0);
             return (
             <div onClick={() => setReportDeliverer(null)} className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-40 p-4 animate-in fade-in-50">
@@ -2517,11 +2591,13 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                   </div>
 
                   {/* Сводка */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                     <div className="bg-slate-50 border border-slate-200 rounded-lg p-3"><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "Продаж" : "Sotuvlar"}</p><p className="text-lg font-mono font-bold text-slate-900">{sales.length}</p></div>
                     <div className="bg-slate-50 border border-slate-200 rounded-lg p-3"><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "Продано" : "Sotilgan"}</p><p className="text-lg font-mono font-bold text-slate-900">{formatSum(sold, lang)}</p></div>
                     <div className="bg-slate-50 border border-slate-200 rounded-lg p-3"><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "Собрано" : "Yig'ilgan"}</p><p className="text-lg font-mono font-bold text-emerald-600">{formatSum(collected, lang)}</p></div>
                     <div className="bg-slate-50 border border-slate-200 rounded-lg p-3"><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "В долг" : "Nasiya"}</p><p className="text-lg font-mono font-bold text-red-600">{formatSum(toDebt, lang)}</p></div>
+                    <div className="bg-rose-50 border border-rose-100 rounded-lg p-3"><p className="text-[10px] uppercase tracking-wider text-rose-400 font-bold">{lang === "ru" ? "Расходы" : "Xarajatlar"}</p><p className="text-lg font-mono font-bold text-rose-600">{formatSum(expensesSum, lang)}</p></div>
+                    <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-3"><p className="text-[10px] uppercase tracking-wider text-emerald-500 font-bold">{lang === "ru" ? "Итог: доход − расход" : "Itog: daromad − xarajat"}</p><p className="text-lg font-mono font-bold text-emerald-700">{formatSum(collected - expensesSum, lang)}</p></div>
                   </div>
 
                   {/* Список операций (клик → детали) */}
@@ -2540,13 +2616,13 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                           {ops.map(op => (
                             <tr key={op.id} onClick={() => setViewOp(op)} className="hover:bg-amber-50/40 cursor-pointer transition-colors">
                               <td className="px-4 py-2.5 font-mono text-[11px] text-slate-500">{op.timestamp ? new Date(op.timestamp).toLocaleString() : "—"}</td>
-                              <td className="px-4 py-2.5 font-medium text-slate-800">{op.shopName || shopNameById(op.shopId)}</td>
+                              <td className="px-4 py-2.5 font-medium text-slate-800">{op.type === "expense" ? `${lang === "ru" ? "Расход" : "Xarajat"}: ${expenseCategoryLabel(op)}` : (op.shopName || shopNameById(op.shopId))}</td>
                               <td className="px-4 py-2.5 text-center">
-                                <span className={`inline-block px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${op.type === "payment" ? "bg-green-100 text-green-800" : op.type === "return" ? "bg-orange-100 text-orange-800" : "bg-amber-100 text-amber-800"}`}>
-                                  {op.type === "payment" ? (lang === "ru" ? "Оплата" : "To'lov") : op.type === "return" ? (lang === "ru" ? "Возврат" : "Qaytarish") : (lang === "ru" ? "Продажа" : "Sotuv")}
+                                <span className={`inline-block px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${op.type === "payment" ? "bg-green-100 text-green-800" : op.type === "return" ? "bg-orange-100 text-orange-800" : op.type === "expense" ? "bg-rose-100 text-rose-800" : "bg-amber-100 text-amber-800"}`}>
+                                  {op.type === "payment" ? (lang === "ru" ? "Оплата" : "To'lov") : op.type === "return" ? (lang === "ru" ? "Возврат" : "Qaytarish") : op.type === "expense" ? (lang === "ru" ? "Расход" : "Xarajat") : (lang === "ru" ? "Продажа" : "Sotuv")}
                                 </span>
                               </td>
-                              <td className="px-4 py-2.5 text-right font-mono font-bold text-slate-900">{op.type === "return" ? `${op.qtyPieces ?? 0} шт` : formatSum(op.type === "sale" ? (op.total ?? op.amount ?? 0) : (op.amount ?? 0), lang)}</td>
+                              <td className={`px-4 py-2.5 text-right font-mono font-bold ${op.type === "expense" ? "text-rose-600" : "text-slate-900"}`}>{op.type === "return" ? `${op.qtyPieces ?? 0} шт` : op.type === "expense" ? `-${formatSum(op.amount ?? 0, lang)}` : formatSum(op.type === "sale" ? (op.total ?? op.amount ?? 0) : (op.amount ?? 0), lang)}</td>
                             </tr>
                           ))}
                           {ops.length === 0 && (
@@ -2574,6 +2650,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                       {viewOp.type === "payment" ? (lang === "ru" ? "Приём оплаты" : "To'lov") :
                        viewOp.type === "sale" ? (lang === "ru" ? "Продажа" : "Sotuv") :
                        viewOp.type === "return" ? (lang === "ru" ? "Возврат (возмещение)" : "Qaytarish") :
+                       viewOp.type === "expense" ? (lang === "ru" ? "Расход доставщика" : "Xarajat") :
                        viewOp.type === "adjustment" ? (lang === "ru" ? "Корректировка" : "Tuzatish") : (lang === "ru" ? "Операция" : "Amaliyot")}
                     </span>
                     <span className="font-mono text-[10px] text-slate-400">#{viewOp.id}</span>
@@ -2592,6 +2669,14 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                       <>
                         <div><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "Категория" : "Kategoriya"}</p><p className="font-semibold text-slate-800">{lang === "ru" ? viewOp.eggNameRu : (viewOp.eggNameUz || viewOp.eggNameRu)}</p></div>
                         <div><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "Возвращено (шт)" : "Qaytarildi (dona)"}</p><p className="font-bold text-orange-600 font-mono">{viewOp.qtyPieces ?? 0}</p></div>
+                      </>
+                    ) : viewOp.type === "expense" ? (
+                      <>
+                        <div><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "Категория расхода" : "Xarajat turi"}</p><p className="font-semibold text-slate-800">{expenseCategoryLabel(viewOp)}</p></div>
+                        <div><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "Сумма расхода" : "Xarajat summasi"}</p><p className="font-bold text-rose-600 font-mono">{formatSum(viewOp.amount || 0, lang)}</p></div>
+                        {viewOp.comment && (
+                          <div className="col-span-2"><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "Комментарий" : "Izoh"}</p><p className="font-medium text-slate-700">{viewOp.comment}</p></div>
+                        )}
                       </>
                     ) : (
                       <div><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{t.paymentType}</p><p className="font-semibold text-slate-800">{viewOp.paymentType === "cash" ? t.cash : viewOp.paymentType === "card" ? t.card : viewOp.paymentType === "transfer" ? t.transfer : viewOp.paymentType === "debt" ? (lang === "ru" ? "В долг" : "Nasiya") : "—"}</p></div>
