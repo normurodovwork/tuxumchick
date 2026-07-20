@@ -108,6 +108,12 @@ def shops(request):
         return Response([shop_dict(s) for s in Shop.objects.all()])
     d = request.data
     existing = Shop.objects.filter(id=d["id"]).first()
+    # Доставщик может СОЗДАТЬ новую точку (ТЗ п.4.3), но редактировать
+    # существующую карточку (название, телефон, архив, координаты) — только
+    # администратор. Иначе любой доставщик мог бы менять/архивировать чужие
+    # магазины прямым запросом к API, минуя UI.
+    if existing is not None and not _is_admin(request.user):
+        raise PermissionDenied("Изменять карточку магазина может только администратор.")
     fields = {
         "name": d.get("name", ""),
         "contact": d.get("contact", "") or "",

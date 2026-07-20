@@ -954,30 +954,32 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
                           <p className={`text-xs font-mono font-bold ${shop.debt > 0 ? "text-red-600" : "text-slate-400"}`}>
                             {shop.debt > 0 ? `${shop.debt.toLocaleString()} сум` : "0 сум"}
                           </p>
-                          <div className="flex gap-1.5 justify-end">
-                            <button 
+                          <div className="flex gap-2 justify-end">
+                            <button
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setSelectedShopId(shop.id);
                                 setIsCollectOpen(true);
                                 setIsSaleOpen(false);
                               }}
-                              className="p-1 px-2 text-[9px] font-bold bg-slate-100 hover:bg-slate-200 text-slate-800 rounded transition-colors cursor-pointer"
+                              className="flex items-center gap-1 px-2.5 py-1.5 text-[10px] font-bold bg-slate-900 hover:bg-slate-800 text-white rounded-lg shadow-sm transition-colors cursor-pointer"
                               title={lang === "ru" ? "Принять оплату" : "To'lov qabul qilish"}
                             >
-                              $
+                              <DollarSign className="w-3.5 h-3.5 text-amber-400" />
+                              <span>{lang === "ru" ? "Оплата" : "To'lov"}</span>
                             </button>
-                            <button 
+                            <button
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setSelectedShopId(shop.id);
                                 setIsSaleOpen(true);
                                 setIsCollectOpen(false);
                               }}
-                              className="p-1 px-2 text-[9px] font-bold bg-amber-400 hover:bg-amber-500 text-slate-900 rounded transition-colors cursor-pointer"
+                              className="flex items-center gap-1 px-2.5 py-1.5 text-[10px] font-bold bg-amber-400 hover:bg-amber-500 text-slate-900 rounded-lg shadow-sm transition-colors cursor-pointer"
                               title={lang === "ru" ? "Оформить продажу" : "Sotuv rasmiylashtirish"}
                             >
-                              +
+                              <Plus className="w-3.5 h-3.5" />
+                              <span>{lang === "ru" ? "Продажа" : "Sotuv"}</span>
                             </button>
                           </div>
                         </div>
@@ -1636,7 +1638,7 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
                       className="py-2 rounded-lg border border-dashed border-orange-300 bg-orange-50/50 text-orange-700 font-bold text-[11px] hover:bg-orange-50 transition-all cursor-pointer flex items-center justify-center gap-1.5"
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
-                      {lang === "ru" ? "+ Добавить возврат (бой/брак)" : "+ Qaytarish qo'shish (siniq)"}
+                      {lang === "ru" ? "Добавить возврат (бой/брак)" : "Qaytarish qo'shish (siniq)"}
                     </button>
                   ) : (
                     <div className="bg-orange-50/60 border border-orange-200 rounded-lg p-3 flex flex-col gap-2.5 animate-in slide-in-from-top-2">

@@ -13,11 +13,14 @@ class ApiFlowTests(APITestCase):
         self.admin = User.objects.create_user(
             username="admin", password="admin123", full_name="Алишер", role=User.Role.ADMIN
         )
+        self.deliverer = User.objects.create_user(
+            username="jasur", password="jasur123", full_name="Жасур", role=User.Role.DELIVERER
+        )
         egg = EggType.objects.create(id="c0", name_ru="C0", name_uz="C0")
         Price.objects.create(egg_type=egg, price_per_tray=Decimal("45000"))
 
-    def _auth(self):
-        r = self.client.post("/api/auth/login/", {"login": "admin", "password": "admin123"}, format="json")
+    def _auth(self, login="admin", password="admin123"):
+        r = self.client.post("/api/auth/login/", {"login": login, "password": password}, format="json")
         self.assertEqual(r.status_code, 200)
         self.client.credentials(HTTP_AUTHORIZATION="Token " + r.data["token"])
         return r.data
@@ -30,6 +33,30 @@ class ApiFlowTests(APITestCase):
     def test_login_rejects_bad_password(self):
         r = self.client.post("/api/auth/login/", {"login": "admin", "password": "nope"}, format="json")
         self.assertEqual(r.status_code, 400)
+
+    def test_deliverer_can_create_shop_but_not_edit_existing(self):
+        # Доставщик создаёт новую точку — разрешено (ТЗ п.4.3)
+        self._auth("jasur", "jasur123")
+        r = self.client.post("/api/shops/", {"id": "shop-new", "name": "Новая точка", "openingDebt": 50000}, format="json")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data["name"], "Новая точка")
+        self.assertEqual(r.data["openingDebt"], 50000)
+
+        # Повторный POST по тому же id (редактирование/архивация) — запрещено
+        r = self.client.post("/api/shops/", {"id": "shop-new", "name": "Переименовал", "isArchived": True}, format="json")
+        self.assertEqual(r.status_code, 403)
+        shop = self.client.get("/api/shops/").data
+        target = next(s for s in shop if s["id"] == "shop-new")
+        self.assertEqual(target["name"], "Новая точка")
+        self.assertFalse(target["isArchived"])
+
+        # Администратору редактирование доступно
+        self.client.credentials()
+        self._auth()
+        r = self.client.post("/api/shops/", {"id": "shop-new", "name": "Точка (уточнено)", "isArchived": True}, format="json")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data["name"], "Точка (уточнено)")
+        self.assertTrue(r.data["isArchived"])
 
     def test_shop_sale_updates_derived_debt(self):
         self._auth()

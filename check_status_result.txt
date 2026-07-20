@@ -1,0 +1,66 @@
+Подключён к серверу!
+
+=== Статус контейнеров ===
+
+$ docker ps --format 'table {{.Names}}	{{.Status}}	{{.Ports}}'
+NAMES                   STATUS                PORTS
+tuxumchick-frontend-1   Up 31 minutes         0.0.0.0:3000->3000/tcp, [::]:3000->3000/tcp
+tuxumchick-backend-1    Up 31 minutes         0.0.0.0:8000->8000/tcp, [::]:8000->8000/tcp
+tuxumchick-db-1         Up 3 days (healthy)   5432/tcp
+
+=== Последний коммит на сервере ===
+
+$ cd /root/tuxumchick && git log --oneline -3
+07dc64f Excel: настоящий формат .xlsx (SheetJS) + чистка заголовка отчёта
+056cc5c Переименование: «Основной отчёт» (убрано «формат заказчика»)
+e079adf Предрелизная ревизия: корректное отображение возвратов везде
+
+=== Таблицы в БД ===
+
+$ docker exec tuxumchick-db-1 psql -U postgres -d tuxumchick -c "\dt" 2>&1
+List of relations
+ Schema |          Name          | Type  |  Owner   
+--------+------------------------+-------+----------
+ public | activity_logs          | table | postgres
+ public | adjustments            | table | postgres
+ public | app_settings           | table | postgres
+ public | auth_group             | table | postgres
+ public | auth_group_permissions | table | postgres
+ public | auth_permission        | table | postgres
+ public | authtoken_token        | table | postgres
+ public | django_admin_log       | table | postgres
+ public | django_content_type    | table | postgres
+ public | django_migrations      | table | postgres
+ public | django_session         | table | postgres
+ public | egg_types              | table | postgres
+ public | kv_store               | table | postgres
+ public | payments               | table | postgres
+ public | prices                 | table | postgres
+ public | returns                | table | postgres
+ public | sale_items             | table | postgres
+ public | sales                  | table | postgres
+ public | shops                  | table | postgres
+ public | users                  | table | postgres
+ public | users_groups           | table | postgres
+ public | users_user_permissions | table | postgres
+(22 rows)
+
+=== Backend логи (последние 20) ===
+
+$ docker logs tuxumchick-backend-1 --tail=20 2>&1
+Ожидание базы данных db:5432...
+База готова.
+Operations to perform:
+  Apply all migrations: accounts, admin, auth, authtoken, catalog, contenttypes, operations, sessions
+Running migrations:
+  No migrations to apply.
+
+163 static files copied to '/app/staticfiles', 153 post-processed.
+[2026-07-20 06:15:01 +0000] [1] [INFO] Starting gunicorn 22.0.0
+[2026-07-20 06:15:01 +0000] [1] [INFO] Listening at: http://0.0.0.0:8000 (1)
+[2026-07-20 06:15:01 +0000] [1] [INFO] Using worker: sync
+[2026-07-20 06:15:01 +0000] [21] [INFO] Booting worker with pid: 21
+[2026-07-20 06:15:01 +0000] [22] [INFO] Booting worker with pid: 22
+[2026-07-20 06:15:01 +0000] [23] [INFO] Booting worker with pid: 23
+
+=== ГОТОВО ===

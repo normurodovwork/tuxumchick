@@ -2122,7 +2122,6 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                       onClick={() => { setAdjustShopId(""); setAdjustAmount(0); setAdjustSign("+"); setAdjustReason(""); setIsAdjustOpen(true); }}
                       className="bg-slate-900 hover:bg-slate-800 text-amber-400 text-xs font-bold px-3 py-2 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
                     >
-                      <Plus className="w-4 h-4" />
                       <span>{lang === "ru" ? "Корректировка долга ±" : "Qarz tuzatish ±"}</span>
                     </button>
                   </div>
