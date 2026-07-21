@@ -90,7 +90,9 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
   const [selectedShopId, setSelectedShopId] = useState("");
   
   // Payment input
-  const [collectAmount, setCollectAmount] = useState(0);
+  // Храним как строку, чтобы поле можно было полностью очистить (иначе «0» не удаляется).
+  const [collectInput, setCollectInput] = useState("");
+  const collectAmount = Number(collectInput) || 0;
   const [collectType, setCollectType] = useState<"cash" | "card" | "transfer">("cash");
   const [collectComment, setCollectComment] = useState("");
 
@@ -312,7 +314,7 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
           { label: lang === "ru" ? "Способ" : "Usul", value: collectType === "cash" ? t.cash : collectType === "transfer" ? t.transfer : t.card },
         ],
       });
-      setCollectAmount(0);
+      setCollectInput("");
       setCollectComment("");
       setSelectedShopId("");
       await loadData();
@@ -1278,12 +1280,13 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
                   {/* Amount to collect */}
                   <div className="flex flex-col gap-1.5">
                     <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{t.amountCollected} (сум)</label>
-                    <input 
-                      type="number"
-                      min="1"
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
                       placeholder="Сумма оплаты"
-                      value={collectAmount}
-                      onChange={(e) => setCollectAmount(Math.max(0, Number(e.target.value)))}
+                      value={collectInput}
+                      onChange={(e) => setCollectInput(e.target.value.replace(/\D/g, "").replace(/^0+(?=\d)/, ""))}
                       className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm font-bold focus:outline-none focus:border-amber-400 font-mono"
                       required
                     />
@@ -1848,7 +1851,7 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
                     <input 
                       type="number"
                       min="0"
-                      value={newShopDebt}
+                      value={newShopDebt || ""}
                       onChange={(e) => setNewShopDebt(Math.max(0, Number(e.target.value)))}
                       className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-semibold focus:outline-none focus:border-amber-400 bg-white font-mono font-bold"
                     />
@@ -2161,7 +2164,7 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
                       type="number"
                       min="1"
                       placeholder={lang === "ru" ? "Введите новую сумму" : "Yangi summani kiriting"}
-                      value={editingLogAmount}
+                      value={editingLogAmount || ""}
                       onChange={(e) => setEditingLogAmount(Math.max(0, Number(e.target.value)))}
                       className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm font-bold focus:outline-none focus:border-amber-400 font-mono"
                       required

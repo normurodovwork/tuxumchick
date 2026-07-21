@@ -68,7 +68,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
   const [shopShowArchived, setShopShowArchived] = useState(false);
 
   const [opFilterPeriod, setOpFilterPeriod] = useState<"all" | "today" | "yesterday">("all");
-  const [opFilterType, setOpFilterType] = useState<"all" | "sale" | "payment" | "expense">("all");
+  const [opFilterType, setOpFilterType] = useState<"all" | "sale" | "sale_debt" | "payment" | "expense">("all");
   const [opFilterOperator, setOpFilterOperator] = useState<string>("all");
   const [opSearchQuery, setOpSearchQuery] = useState("");
   // Просмотр деталей операции по клику (П4)
@@ -834,19 +834,87 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
   // ---- Excel export (ТЗ п.4.9) --------------------------------------------
   // Настоящий .xlsx через SheetJS (динамический импорт — не грузим в основной бандл).
   // Сохраняет кириллицу/узбекский; открывается в Excel/LibreOffice/Sheets.
-  const downloadExcel = async (filenameBase: string, title: string, headers: string[], rows: (string | number)[][]) => {
+  // Оформление выгрузки: шапка на тёмной заливке и закреплена, разделители разрядов,
+  // авансы красным, автофильтр, рамки, титульный блок с периодом и настройки печати.
+  const MONEY_FMT = '#,##0;[Red]-#,##0';
+  const XL = {
+    ink: "FF0F172A",      // slate-900 — как шапка в интерфейсе
+    line: "FFE2E8F0",     // slate-200 — рамки
+    totalBg: "FFF1F5F9",  // slate-100 — подложка итоговых строк
+    muted: "FF94A3B8",    // slate-400 — подзаголовок
+  };
+  // Строка считается итоговой (её выделяем), если начинается с этих слов.
+  const TOTAL_RE = /^(UMUMIY|JAMI|KUN ITOGI|ITOG|Начальный долг|Конечный долг|Boshlang'ich qarz|Yakuniy qarz)/i;
+
+  // title — имя листа, displayTitle — заголовок в первой строке (если отличается).
+  const downloadExcel = async (filenameBase: string, title: string, headers: string[], rows: (string | number)[][], displayTitle?: string) => {
     try {
-      const mod: any = await import("xlsx");
-      const XLSX = mod.default ?? mod;
-      const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-      // Ширина колонок по содержимому (для читаемости).
-      ws["!cols"] = headers.map((h, i) => {
-        const maxLen = Math.max(String(h).length, ...rows.map(r => String(r[i] ?? "").length));
-        return { wch: Math.min(40, Math.max(8, maxLen + 2)) };
+      const mod: any = await import("exceljs");
+      const ExcelJS = mod.default ?? mod;
+      const wb = new ExcelJS.Workbook();
+      wb.creator = "EggLogistics";
+      wb.created = new Date();
+
+      const HDR = 4; // строка шапки: 1 — заголовок, 2 — период, 3 — пусто
+      const ws = wb.addWorksheet((title || "Отчёт").slice(0, 28).replace(/[\\/*?:[\]]/g, " "), {
+        views: [{ state: "frozen", ySplit: HDR }],
+        pageSetup: {
+          orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0,
+          printTitlesRow: `${HDR}:${HDR}`, margins: { left: 0.3, right: 0.3, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 },
+        },
       });
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, (title || "Отчёт").slice(0, 28));
-      XLSX.writeFile(wb, `${filenameBase}_${new Date().toISOString().split("T")[0]}.xlsx`);
+
+      const lastCol = headers.length;
+      const period = reportStart || reportEnd
+        ? `${lang === "ru" ? "Период" : "Davr"}: ${reportStart || "…"} — ${reportEnd || "…"}`
+        : (lang === "ru" ? "Период: за всё время" : "Davr: butun davr");
+
+      ws.addRow([displayTitle || title]);
+      ws.addRow([`${period}   •   ${lang === "ru" ? "Выгружено" : "Yuklandi"}: ${new Date().toLocaleString()}`]);
+      ws.addRow([]);
+      ws.mergeCells(1, 1, 1, lastCol);
+      ws.mergeCells(2, 1, 2, lastCol);
+      ws.getCell(1, 1).font = { bold: true, size: 14, color: { argb: XL.ink } };
+      ws.getCell(2, 1).font = { size: 9, italic: true, color: { argb: XL.muted } };
+
+      const head = ws.addRow(headers);
+      head.height = 28;
+      head.eachCell({ includeEmpty: true }, (cell: any) => {
+        cell.font = { bold: true, size: 10, color: { argb: "FFFFFFFF" } };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: XL.ink } };
+        cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+      });
+
+      rows.forEach(r => {
+        const row = ws.addRow(r);
+        const isTotal = TOTAL_RE.test(String(r[0] ?? "")) || TOTAL_RE.test(String(r[2] ?? ""));
+        for (let c = 1; c <= lastCol; c++) {
+          const cell = row.getCell(c);
+          cell.border = {
+            top: { style: "thin", color: { argb: XL.line } }, bottom: { style: "thin", color: { argb: XL.line } },
+            left: { style: "thin", color: { argb: XL.line } }, right: { style: "thin", color: { argb: XL.line } },
+          };
+          if (typeof cell.value === "number") cell.numFmt = MONEY_FMT;
+          if (isTotal) {
+            cell.font = { bold: true, size: 10 };
+            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: XL.totalBg } };
+          }
+        }
+      });
+
+      ws.autoFilter = { from: { row: HDR, column: 1 }, to: { row: HDR, column: lastCol } };
+      ws.columns.forEach((col: any, i: number) => {
+        const maxLen = Math.max(String(headers[i] ?? "").length, ...rows.map(r => String(r[i] ?? "").length));
+        col.width = Math.min(38, Math.max(9, maxLen + 2));
+      });
+
+      const buf = await wb.xlsx.writeBuffer();
+      const url = URL.createObjectURL(new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${filenameBase}_${new Date().toISOString().split("T")[0]}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
       showToast(lang === "ru" ? "Отчёт выгружен в Excel" : "Hisobot Excelга yuklandi");
     } catch (e) {
       showToast(lang === "ru" ? "Ошибка выгрузки в Excel" : "Excelга yuklashda xatolik", "error");
@@ -964,13 +1032,38 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
       days[dk].agents[ak].push(l);
     }
 
+    // Остаток долга магазина после каждой операции.
+    // Формула повторяет backend (catalog/models.py, current_debt):
+    //   долг = openingDebt + Σ(продажа.итого − получено) − Σ(оплата) + Σ(корректировка).
+    // Идём по ВСЕМ операциям магазина, а не только за период отчёта, иначе остаток
+    // на первой строке периода будет неверным. Возвраты долг не меняют.
+    const debtAfter: Record<string, number> = {};
+    {
+      const running: Record<string, number> = {};
+      const chrono = activityLogs
+        .filter(l => !l.isCancelled && (l.type === "sale" || l.type === "payment" || l.type === "adjustment" || l.type === "return"))
+        .sort((a, b) => new Date(a.operationDate || a.timestamp).getTime() - new Date(b.operationDate || b.timestamp).getTime());
+      for (const l of chrono) {
+        const sid = String(l.shopId ?? "");
+        if (!(sid in running)) {
+          const sh = shops.find(s => s.id === l.shopId);
+          running[sid] = sh ? (sh.openingDebt || 0) : 0;
+        }
+        if (l.type === "sale") running[sid] += (l.total || 0) - (l.received || 0);
+        else if (l.type === "payment") running[sid] -= (l.amount || 0);
+        else if (l.type === "adjustment") running[sid] += (l.amount || 0);
+        debtAfter[l.id] = Math.round(running[sid]);
+      }
+    }
+
     const rows: (string | number)[][] = [];
-    const BLANK = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""];
+    const BLANK = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""];
     let grandCash = 0, grandIncome = 0, grandExpense = 0;
 
     for (const dk of dayKeys) {
       for (const ak of days[dk].agentKeys) {
         let dayCash = 0, dayCard = 0, dayTransfer = 0, dayIncome = 0, dayExpense = 0;
+        const blockStart = rows.length;
 
         for (const l of days[dk].agents[ak]) {
           const shop = shops.find(s => s.id === l.shopId);
@@ -985,10 +1078,11 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
               else if (l.paymentType === "transfer") dayTransfer += rec;
               else dayCash += rec;
             }
+            const qoldiq = debtAfter[l.id] ?? "";
             const items = Array.isArray(l.items) ? l.items : [];
             if (items.length === 0) {
               const pc = pay(l.paymentType, rec);
-              rows.push([ak, dk, dokon, "", "", "", "", "", Math.round(l.total || 0), pc.naxt, Math.round((l.total || 0) - (l.received || 0)), pc.klik, pc.perech, eski, "", ""]);
+              rows.push([ak, dk, dokon, "", "", "", "", "", Math.round(l.total || 0), pc.naxt, Math.round((l.total || 0) - (l.received || 0)), pc.klik, pc.perech, eski, "", "", "", "", "", qoldiq]);
             }
             items.forEach((it: any, idx: number) => {
               const trays = it.trays || 0;
@@ -1011,6 +1105,10 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                 first ? eski : "",                                 // ESKIQARZ
                 "",                                               // RASXOD
                 "",                                               // IZOH
+                "",                                               // QARZ NAXT
+                "",                                               // QARZ KLIK
+                "",                                               // QARZ PERECHESLENIYA
+                first ? qoldiq : "",                               // QOLDIQ QARZ
               ]);
             });
           } else if (l.type === "payment") {
@@ -1019,10 +1117,14 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
             if (l.paymentType === "card") dayCard += amt;
             else if (l.paymentType === "transfer") dayTransfer += amt;
             else dayCash += amt;
+            // Погашение долга магазина идёт в отдельные колонки QARZ NAXT / KLIK /
+            // PERECHESLENIYA, чтобы не смешиваться с деньгами, полученными при продаже.
             const pc = pay(l.paymentType, amt);
-            rows.push([ak, dk, dokon, "", "", "", "", "", "", pc.naxt, "", pc.klik, pc.perech, eski, "", l.comment || ""]);
+            rows.push([ak, dk, dokon, "", "", "", "", "", "", "", "", "", "", eski, "", l.comment || "",
+              pc.naxt, pc.klik, pc.perech, debtAfter[l.id] ?? ""]);
           } else if (l.type === "return") {
-            rows.push([ak, dk, dokon, lang === "ru" ? l.eggNameRu : (l.eggNameUz || l.eggNameRu), "", "", l.qtyPieces || 0, "", "", "", "", "", "", eski, "", l.comment || ""]);
+            rows.push([ak, dk, dokon, lang === "ru" ? l.eggNameRu : (l.eggNameUz || l.eggNameRu), "", "", l.qtyPieces || 0, "", "", "", "", "", "", eski, "", l.comment || "",
+              "", "", "", debtAfter[l.id] ?? ""]);
           } else if (l.type === "expense") {
             const amt = Math.round(l.amount || 0);
             dayExpense += amt;
@@ -1033,24 +1135,31 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
 
         grandCash += dayCash; grandIncome += dayIncome; grandExpense += dayExpense;
 
-        // Итоги агента за день: нал / доход / расход / доход − расход
-        rows.push([ak, dk, "JAMI NAXT (нал за день)", "", "", "", "", "", "", dayCash, "", dayCard || "", dayTransfer || "", "", "", ""]);
-        rows.push([ak, dk, "JAMI DAROMAD (доход за день)", "", "", "", "", "", dayIncome, "", "", "", "", "", "", ""]);
-        rows.push([ak, dk, "JAMI RASXOD (расход за день)", "", "", "", "", "", "", "", "", "", "", "", dayExpense, ""]);
-        rows.push([ak, dk, "KUN ITOGI: DAROMAD − RASXOD", "", "", "", "", "", dayIncome - dayExpense, "", "", "", "", "", "", ""]);
+        // Итоги агента за день уходят вбок — в колонки JAMI NAXT / JAMI DAROMAD /
+        // JAMI RASXOD / KUN ITOGI на последней строке блока, а не отдельными строками.
+        const lastRow = rows[rows.length - 1];
+        if (rows.length > blockStart && lastRow) {
+          while (lastRow.length < 21) lastRow.push("");
+          lastRow[21] = dayCash;
+          lastRow[22] = dayIncome;
+          lastRow[23] = dayExpense;
+          lastRow[24] = dayIncome - dayExpense;
+        }
         rows.push([...BLANK]);
       }
     }
 
-    // Общий итог за весь период (в самом конце отчёта)
-    rows.push(["UMUMIY (общий итог)", "", "NAXT (весь нал)", "", "", "", "", "", "", grandCash, "", "", "", "", "", ""]);
-    rows.push(["UMUMIY (общий итог)", "", "DAROMAD (весь доход)", "", "", "", "", "", grandIncome, "", "", "", "", "", "", ""]);
-    rows.push(["UMUMIY (общий итог)", "", "RASXOD (все расходы)", "", "", "", "", "", "", "", "", "", "", "", grandExpense, ""]);
-    rows.push(["UMUMIY (общий итог)", "", "ITOG: DAROMAD − RASXOD", "", "", "", "", "", grandIncome - grandExpense, "", "", "", "", "", "", ""]);
+    // Общий итог за весь период (в самом конце отчёта) — в той же колонке JAMI
+    rows.push(["UMUMIY (общий итог)", "", "NAXT (весь нал)", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", grandCash]);
+    rows.push(["UMUMIY (общий итог)", "", "DAROMAD (весь доход)", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", grandIncome]);
+    rows.push(["UMUMIY (общий итог)", "", "RASXOD (все расходы)", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", grandExpense]);
+    rows.push(["UMUMIY (общий итог)", "", "ITOG: DAROMAD − RASXOD", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", grandIncome - grandExpense]);
 
     downloadExcel("otchet", "Otchet",
-      ["SHAFYOR", "SANA", "DOKON NOMI", "KATEGORIYA", "POCHKA", "DONA", "SINIQ", "NARX", "SUMMA", "NAXT", "QARZ", "KLIK", "PERECHESLENIYA", "ESKIQARZ", "RASXOD", "IZOH"],
-      rows);
+      ["SHAFYOR", "SANA", "DOKON NOMI", "KATEGORIYA", "POCHKA", "DONA", "SINIQ", "NARX", "SUMMA", "NAXT", "QARZ", "KLIK", "PERECHESLENIYA", "ESKIQARZ", "RASXOD", "IZOH",
+       "QARZ NAXT", "QARZ KLIK", "QARZ PERECHESLENIYA", "QOLDIQ QARZ", "JAMI",
+       "JAMI NAXT", "JAMI DAROMAD", "JAMI RASXOD", "KUN ITOGI"],
+      rows, lang === "ru" ? "Основной отчёт" : "Asosiy hisobot");
   };
 
   // 3. По магазину (акт сверки)
@@ -1070,23 +1179,43 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
       else inPeriod.push(l);
     }
     let running = opening;
-    const rows: (string | number)[][] = [[lang === "ru" ? "Начальный долг" : "Boshlang'ich qarz", "", "", "", Math.round(opening)]];
+    // Деньги ложатся в колонку своего способа оплаты (наличка / карта / перечисление).
+    const payCells = (pt: string, amt: number): (string | number)[] =>
+      [pt === "card" ? "" : pt === "transfer" ? "" : amt, pt === "card" ? amt : "", pt === "transfer" ? amt : ""];
+    const debtCell = (l: any) => `${Math.round(running)}${l.isCancelled ? " (аннул.)" : ""}`;
+
+    const rows: (string | number)[][] = [[lang === "ru" ? "Начальный долг" : "Boshlang'ich qarz", "", "", "", "", "", Math.round(opening)]];
     for (const l of inPeriod) {
       const d = new Date(l.operationDate || l.timestamp);
       if (end && d > end) continue;
-      const delta = ledgerDelta(l);
-      running += delta;
-      rows.push([
-        d.toLocaleDateString(), opTypeLabel(l),
-        l.type === "sale" ? Math.round(l.total ?? l.amount ?? 0) : "",
-        l.type !== "sale" ? Math.round(l.type === "payment" ? (l.amount || 0) : Math.abs(delta)) : Math.round(l.received ?? 0),
-        `${Math.round(running)}${l.isCancelled ? " (аннул.)" : ""}`,
-      ]);
+      const date = d.toLocaleDateString();
+
+      if (l.type === "sale") {
+        // Продажа и полученные по ней деньги — двумя отдельными строками:
+        // сначала отгрузка (долг растёт), затем оплата (долг гасится).
+        const total = Math.round(l.total ?? l.amount ?? 0);
+        const rec = Math.round(l.received ?? 0);
+        if (!l.isCancelled) running += total;
+        rows.push([date, opTypeLabel(l), total, "", "", "", debtCell(l)]);
+        if (rec > 0) {
+          if (!l.isCancelled) running -= rec;
+          rows.push([date, lang === "ru" ? "Оплата" : "To'lov", "", ...payCells(l.paymentType, rec), debtCell(l)]);
+        }
+      } else if (l.type === "payment") {
+        const amt = Math.round(l.amount || 0);
+        if (!l.isCancelled) running -= amt;
+        rows.push([date, opTypeLabel(l), "", ...payCells(l.paymentType, amt), debtCell(l)]);
+      } else {
+        // Корректировка — не деньги, а правка долга: показываем со знаком в «Приход».
+        const delta = Math.round(ledgerDelta(l));
+        running += delta;
+        rows.push([date, opTypeLabel(l), delta, "", "", "", debtCell(l)]);
+      }
     }
-    rows.push([lang === "ru" ? "Конечный долг" : "Yakuniy qarz", "", "", "", Math.round(running)]);
+    rows.push([lang === "ru" ? "Конечный долг" : "Yakuniy qarz", "", "", "", "", "", Math.round(running)]);
     downloadExcel(`shop_${shop.name}`, shop.name,
-      lang === "ru" ? ["Дата", "Операция", "Приход (сум)", "Оплата (сум)", "Долг после"]
-        : ["Sana", "Amaliyot", "Kirim (so'm)", "To'lov (so'm)", "Qarz"],
+      lang === "ru" ? ["Дата", "Операция", "Приход (сум)", "Наличка", "Карта", "Перечисление", "Долг после"]
+        : ["Sana", "Amaliyot", "Kirim (so'm)", "Naqd", "Karta", "O'tkazma", "Qarz"],
       rows);
   };
 
@@ -1338,8 +1467,11 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                        (log.id || "").toLowerCase().includes(opSearchQuery.toLowerCase());
       if (!msgMatch) return false;
 
-      // 2. Type Match
-      if (opFilterType !== "all" && log.type !== opFilterType) return false;
+      // 2. Type Match. "sale_debt" — только продажи, после которых магазин остался должен.
+      if (opFilterType === "sale_debt") {
+        if (log.type !== "sale") return false;
+        if ((log.total ?? log.amount ?? 0) - (log.received || 0) <= 0) return false;
+      } else if (opFilterType !== "all" && log.type !== opFilterType) return false;
 
       // 3. Operator Match — по стабильному id доставщика (П4/П5), не по имени
       if (opFilterOperator !== "all" && String(log.operatorId ?? "") !== String(opFilterOperator)) return false;
@@ -2150,7 +2282,8 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                         className="px-3 py-1.5 rounded-lg border border-slate-200 text-xs bg-white font-medium"
                       >
                         <option value="all">Все типы</option>
-                        <option value="sale">Продажи (начисление долга)</option>
+                        <option value="sale">Продажи (все)</option>
+                        <option value="sale_debt">Продажи в долг (начисление долга)</option>
                         <option value="payment">Прием оплаты (погашение долга)</option>
                         <option value="expense">Расходы доставщиков</option>
                       </select>
@@ -2565,6 +2698,17 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
             const sales = ops.filter(l => l.type === "sale");
             const sold = sales.reduce((s, l) => s + (l.total ?? l.amount ?? 0), 0);
             const collected = ops.reduce((s, l) => s + (l.type === "sale" ? (l.received || 0) : l.type === "payment" ? (l.amount || 0) : 0), 0);
+            // Разбивка собранного по видам оплаты (П1): наличные / клик / перечисление.
+            const collectedBy = { cash: 0, card: 0, transfer: 0 };
+            ops.forEach(l => {
+              const amt = l.type === "sale" ? (l.received || 0) : l.type === "payment" ? (l.amount || 0) : 0;
+              if (amt <= 0) return;
+              if (l.paymentType === "card") collectedBy.card += amt;
+              else if (l.paymentType === "transfer") collectedBy.transfer += amt;
+              else collectedBy.cash += amt;
+            });
+            // Собрано долгов = приёмы оплаты (гашение долга), без денег, полученных прямо при продаже.
+            const collectedDebt = ops.filter(l => l.type === "payment").reduce((s, l) => s + (l.amount || 0), 0);
             const expensesSum = ops.filter(l => l.type === "expense").reduce((s, l) => s + (l.amount || 0), 0);
             const toDebt = sales.reduce((s, l) => s + ((l.total ?? l.amount ?? 0) - (l.received || 0)), 0);
             return (
@@ -2593,7 +2737,16 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                     <div className="bg-slate-50 border border-slate-200 rounded-lg p-3"><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "Продаж" : "Sotuvlar"}</p><p className="text-lg font-mono font-bold text-slate-900">{sales.length}</p></div>
                     <div className="bg-slate-50 border border-slate-200 rounded-lg p-3"><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "Продано" : "Sotilgan"}</p><p className="text-lg font-mono font-bold text-slate-900">{formatSum(sold, lang)}</p></div>
-                    <div className="bg-slate-50 border border-slate-200 rounded-lg p-3"><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "Собрано" : "Yig'ilgan"}</p><p className="text-lg font-mono font-bold text-emerald-600">{formatSum(collected, lang)}</p></div>
+                    <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+                      <p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "Собрано" : "Yig'ilgan"}</p>
+                      <p className="text-lg font-mono font-bold text-emerald-600">{formatSum(collected, lang)}</p>
+                      <div className="mt-2 pt-2 border-t border-slate-200 flex flex-col gap-0.5">
+                        <div className="flex justify-between items-baseline gap-2"><span className="text-[10px] text-slate-500 font-semibold">{t.cash}</span><span className="text-[11px] font-mono font-bold text-slate-700">{formatSum(collectedBy.cash, lang)}</span></div>
+                        <div className="flex justify-between items-baseline gap-2"><span className="text-[10px] text-slate-500 font-semibold">{t.card}</span><span className="text-[11px] font-mono font-bold text-slate-700">{formatSum(collectedBy.card, lang)}</span></div>
+                        <div className="flex justify-between items-baseline gap-2"><span className="text-[10px] text-slate-500 font-semibold">{t.transfer}</span><span className="text-[11px] font-mono font-bold text-slate-700">{formatSum(collectedBy.transfer, lang)}</span></div>
+                        <div className="flex justify-between items-baseline gap-2 mt-1 pt-1.5 border-t border-dashed border-slate-200"><span className="text-[10px] text-slate-500 font-semibold">{lang === "ru" ? "Собрано долгов" : "Qarzdan yig'ilgan"}</span><span className="text-[11px] font-mono font-bold text-emerald-600">{formatSum(collectedDebt, lang)}</span></div>
+                      </div>
+                    </div>
                     <div className="bg-slate-50 border border-slate-200 rounded-lg p-3"><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "В долг" : "Nasiya"}</p><p className="text-lg font-mono font-bold text-red-600">{formatSum(toDebt, lang)}</p></div>
                     <div className="bg-rose-50 border border-rose-100 rounded-lg p-3"><p className="text-[10px] uppercase tracking-wider text-rose-400 font-bold">{lang === "ru" ? "Расходы" : "Xarajatlar"}</p><p className="text-lg font-mono font-bold text-rose-600">{formatSum(expensesSum, lang)}</p></div>
                     <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-3"><p className="text-[10px] uppercase tracking-wider text-emerald-500 font-bold">{lang === "ru" ? "Итог: доход − расход" : "Itog: daromad − xarajat"}</p><p className="text-lg font-mono font-bold text-emerald-700">{formatSum(collected - expensesSum, lang)}</p></div>
@@ -2612,18 +2765,27 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
-                          {ops.map(op => (
+                          {ops.map(op => {
+                            // Продажа: зелёная — оплачена полностью, жёлтая — магазин остался должен.
+                            const saleLeft = (op.total ?? op.amount ?? 0) - (op.received || 0);
+                            const salePaidFull = op.type === "sale" && saleLeft <= 0;
+                            return (
                             <tr key={op.id} onClick={() => setViewOp(op)} className="hover:bg-amber-50/40 cursor-pointer transition-colors">
                               <td className="px-4 py-2.5 font-mono text-[11px] text-slate-500">{op.timestamp ? new Date(op.timestamp).toLocaleString() : "—"}</td>
                               <td className="px-4 py-2.5 font-medium text-slate-800">{op.type === "expense" ? `${lang === "ru" ? "Расход" : "Xarajat"}: ${expenseCategoryLabel(op)}` : (op.shopName || shopNameById(op.shopId))}</td>
                               <td className="px-4 py-2.5 text-center">
-                                <span className={`inline-block px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${op.type === "payment" ? "bg-green-100 text-green-800" : op.type === "return" ? "bg-orange-100 text-orange-800" : op.type === "expense" ? "bg-rose-100 text-rose-800" : "bg-amber-100 text-amber-800"}`}>
+                                <span
+                                  title={op.type !== "sale" ? undefined : salePaidFull
+                                    ? (lang === "ru" ? "Оплачено полностью" : "To'liq to'langan")
+                                    : `${lang === "ru" ? "Осталось долга" : "Qarz qoldi"}: ${formatSum(saleLeft, lang)}`}
+                                  className={`inline-block px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${op.type === "payment" ? "bg-green-100 text-green-800" : op.type === "return" ? "bg-orange-100 text-orange-800" : op.type === "expense" ? "bg-rose-100 text-rose-800" : salePaidFull ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>
                                   {op.type === "payment" ? (lang === "ru" ? "Оплата" : "To'lov") : op.type === "return" ? (lang === "ru" ? "Возврат" : "Qaytarish") : op.type === "expense" ? (lang === "ru" ? "Расход" : "Xarajat") : (lang === "ru" ? "Продажа" : "Sotuv")}
                                 </span>
                               </td>
                               <td className={`px-4 py-2.5 text-right font-mono font-bold ${op.type === "expense" ? "text-rose-600" : "text-slate-900"}`}>{op.type === "return" ? `${op.qtyPieces ?? 0} шт` : op.type === "expense" ? `-${formatSum(op.amount ?? 0, lang)}` : formatSum(op.type === "sale" ? (op.total ?? op.amount ?? 0) : (op.amount ?? 0), lang)}</td>
                             </tr>
-                          ))}
+                            );
+                          })}
                           {ops.length === 0 && (
                             <tr><td colSpan={4} className="px-4 py-8 text-center text-slate-400 text-xs">{lang === "ru" ? "Нет операций за период." : "Bu davrda amaliyotlar yo'q."}</td></tr>
                           )}
