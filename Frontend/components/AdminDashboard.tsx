@@ -33,6 +33,11 @@ type AdminTab = "dashboard" | "deliverers" | "shops" | "operations" | "egg_types
 // не удалены — верните true, когда модуль будет готов.
 const SHOW_WAREHOUSE_STOCKS = false;
 
+// Цены могут быть дробными (например, C1 = 1066.666…) — показываем максимум
+// два знака после запятой, целые значения остаются без «,00».
+const formatPrice = (value: number) =>
+  Number(value || 0).toLocaleString("ru-RU", { maximumFractionDigits: 2 });
+
 export default function AdminDashboard({ username, onLogout, lang, setLang }: AdminDashboardProps) {
   const t = translations[lang];
 
@@ -1954,15 +1959,15 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                       <div className="grid grid-cols-3 gap-2 font-mono text-center text-xs">
                         <div className="p-2.5 bg-slate-50 border border-slate-100 rounded-lg">
                           <p className="text-slate-400 font-bold">C0</p>
-                          <p className="font-bold text-slate-800 mt-1">{priceC0} сум</p>
+                          <p className="font-bold text-slate-800 mt-1">{formatPrice(priceC0)} сум</p>
                         </div>
                         <div className="p-2.5 bg-slate-50 border border-slate-100 rounded-lg">
                           <p className="text-slate-400 font-bold">C1</p>
-                          <p className="font-bold text-slate-800 mt-1">{priceC1} сум</p>
+                          <p className="font-bold text-slate-800 mt-1">{formatPrice(priceC1)} сум</p>
                         </div>
                         <div className="p-2.5 bg-slate-50 border border-slate-100 rounded-lg">
                           <p className="text-slate-400 font-bold">Ут.</p>
-                          <p className="font-bold text-slate-800 mt-1">{priceDom} сум</p>
+                          <p className="font-bold text-slate-800 mt-1">{formatPrice(priceDom)} сум</p>
                         </div>
                       </div>
                     </div>
