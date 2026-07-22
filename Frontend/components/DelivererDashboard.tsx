@@ -14,6 +14,7 @@ import {
 } from "../lib/db-service";
 import { translations, Language } from "../lib/translations";
 import LocationField, { yandexRouteUrl } from "./LocationField";
+import ShopSelect from "./ShopSelect";
 
 interface DelivererDashboardProps {
   username: string;
@@ -1264,17 +1265,16 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
                   {/* Shop Select */}
                   <div className="flex flex-col gap-1.5">
                     <label className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{t.selectShop}</label>
-                    <select 
+                    <ShopSelect
+                      shops={shops}
                       value={selectedShopId}
-                      onChange={(e) => setSelectedShopId(e.target.value)}
-                      className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-semibold focus:outline-none focus:border-amber-400 bg-white"
+                      onChange={setSelectedShopId}
+                      lang={lang}
                       required
-                    >
-                      <option value="">-- Выбрать --</option>
-                      {shops.map(s => (
-                        <option key={s.id} value={s.id}>{s.name} (долг: {s.debt.toLocaleString()} сум)</option>
-                      ))}
-                    </select>
+                      placeholder="-- Выбрать --"
+                      optionLabel={(s) => `${s.name} (долг: ${s.debt.toLocaleString()} сум)`}
+                      className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-semibold focus:outline-none focus:border-amber-400 bg-white"
+                    />
                   </div>
 
                   {/* Amount to collect */}
@@ -1484,17 +1484,16 @@ export default function DelivererDashboard({ username, userId, onLogout, lang, s
                         </div>
                       </div>
                     ) : (
-                      <select 
+                      <ShopSelect
+                        shops={shops}
                         value={selectedShopId}
-                        onChange={(e) => setSelectedShopId(e.target.value)}
-                        className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-semibold focus:outline-none focus:border-amber-400 bg-white"
+                        onChange={setSelectedShopId}
+                        lang={lang}
                         required
-                      >
-                        <option value="">-- Выбрать --</option>
-                        {shops.map(s => (
-                          <option key={s.id} value={s.id}>{s.name} (долг: {s.debt.toLocaleString()} сум)</option>
-                        ))}
-                      </select>
+                        placeholder="-- Выбрать --"
+                        optionLabel={(s) => `${s.name} (долг: ${s.debt.toLocaleString()} сум)`}
+                        className="w-full px-3 py-2 rounded-lg border border-slate-200 text-xs font-semibold focus:outline-none focus:border-amber-400 bg-white"
+                      />
                     )}
                   </div>
 

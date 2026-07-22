@@ -18,6 +18,7 @@ import {
 } from "../lib/db-service";
 import { translations, Language } from "../lib/translations";
 import LocationField, { yandexRouteUrl } from "./LocationField";
+import ShopSelect from "./ShopSelect";
 
 interface AdminDashboardProps {
   username: string;
@@ -80,13 +81,16 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
   const [viewOp, setViewOp] = useState<any>(null);
   // Отчёт по доставщику (П2): выбранный доставщик и период
   const [reportDeliverer, setReportDeliverer] = useState<any>(null);
-  const [reportDelivererPeriod, setReportDelivererPeriod] = useState<"today" | "all">("today");
+  const [reportDelivererPeriod, setReportDelivererPeriod] = useState<"today" | "yesterday" | "all">("today");
 
   // Configuration States (Settings Modal)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [configTrays, setConfigTrays] = useState(12);
   const [configEggs, setConfigEggs] = useState(30);
   const [configThreshold, setConfigThreshold] = useState(10);
+
+  // Отчёт «по магазину» (вкладка Отчёты)
+  const [reportShopId, setReportShopId] = useState("");
 
   // Price Modal States
   const [isPriceOpen, setIsPriceOpen] = useState(false);
@@ -1762,8 +1766,21 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                         {formatSum(stats.salesToday, lang)}
                       </p>
                     </div>
+                    {/* givenToDebt — сальдо: минус означает, что за период долгов
+                        собрали больше, чем выдали. Показываем это как «Собрано
+                        долгов», а не как отрицательную выдачу в долг. */}
                     <p className="text-[10px] text-slate-500 mt-2 font-medium">
-                      {lang === "ru" ? "Отдано в долг за период:" : "Nasiyaga berilgan:"} <span className="text-red-600 font-bold">{formatSum(stats.givenToDebt, lang)}</span>
+                      {stats.givenToDebt >= 0 ? (
+                        <>
+                          {lang === "ru" ? "Отдано в долг за период:" : "Nasiyaga berilgan:"}{" "}
+                          <span className="text-red-600 font-bold">{formatSum(stats.givenToDebt, lang)}</span>
+                        </>
+                      ) : (
+                        <>
+                          {lang === "ru" ? "Собрано долгов за период:" : "Yig'ilgan qarzlar:"}{" "}
+                          <span className="text-emerald-600 font-bold">{formatSum(-stats.givenToDebt, lang)}</span>
+                        </>
+                      )}
                     </p>
                   </div>
 
@@ -2623,13 +2640,17 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                   <div className="flex flex-col sm:flex-row items-stretch sm:items-end gap-3 p-4 rounded-xl border border-slate-200 bg-slate-50">
                     <div className="flex-1 flex flex-col gap-1">
                       <label className="text-sm font-bold text-slate-800">{lang === "ru" ? "3. По магазину (акт сверки)" : "3. Do'kon bo'yicha (solishtirma)"}</label>
-                      <select id="reportShopSel" defaultValue="" className="px-3 py-2 rounded-lg border border-slate-200 text-xs font-semibold bg-white focus:outline-none focus:border-amber-400">
-                        <option value="">-- {lang === "ru" ? "Выбрать магазин" : "Do'konni tanlang"} --</option>
-                        {shops.filter(s => !s.isArchived).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                      </select>
+                      <ShopSelect
+                        shops={shops.filter(s => !s.isArchived)}
+                        value={reportShopId}
+                        onChange={setReportShopId}
+                        lang={lang}
+                        placeholder={`-- ${lang === "ru" ? "Выбрать магазин" : "Do'konni tanlang"} --`}
+                        className="px-3 py-2 rounded-lg border border-slate-200 text-xs font-semibold bg-white focus:outline-none focus:border-amber-400"
+                      />
                     </div>
                     <button
-                      onClick={() => { const el = document.getElementById("reportShopSel") as HTMLSelectElement | null; if (el?.value) reportByShop(el.value); else showToast(lang === "ru" ? "Выберите магазин" : "Do'konni tanlang", "error"); }}
+                      onClick={() => { if (reportShopId) reportByShop(reportShopId); else showToast(lang === "ru" ? "Выберите магазин" : "Do'konni tanlang", "error"); }}
                       className="bg-amber-400 hover:bg-amber-500 text-slate-900 px-4 py-2 rounded-lg font-bold text-xs shadow-sm hover:shadow active:scale-95 transition-all flex items-center gap-1.5 justify-center cursor-pointer border border-amber-300">
                       <FileSpreadsheet className="w-4 h-4 shrink-0" />{lang === "ru" ? "Скачать" : "Yuklab olish"}
                     </button>
@@ -2699,13 +2720,16 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
 
           {/* Modal: отчёт по доставщику (П2) */}
           {reportDeliverer && (() => {
-            const isToday = (l: any) => {
-              const d = new Date(l.operationDate || l.timestamp);
-              return d.toDateString() === new Date().toDateString();
+            const todayKey = new Date().toDateString();
+            const yesterdayKey = (() => { const d = new Date(); d.setDate(d.getDate() - 1); return d.toDateString(); })();
+            const inPeriod = (l: any) => {
+              if (reportDelivererPeriod === "all") return true;
+              const key = new Date(l.operationDate || l.timestamp).toDateString();
+              return key === (reportDelivererPeriod === "today" ? todayKey : yesterdayKey);
             };
             const ops = activityLogs
               .filter(l => !l.isCancelled && String(l.operatorId ?? "") === String(reportDeliverer.id) && (l.type === "sale" || l.type === "payment" || l.type === "return" || l.type === "expense"))
-              .filter(l => reportDelivererPeriod === "all" ? true : isToday(l));
+              .filter(inPeriod);
             const sales = ops.filter(l => l.type === "sale");
             const sold = sales.reduce((s, l) => s + (l.total ?? l.amount ?? 0), 0);
             const collected = ops.reduce((s, l) => s + (l.type === "sale" ? (l.received || 0) : l.type === "payment" ? (l.amount || 0) : 0), 0);
@@ -2721,6 +2745,9 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
             // Собрано долгов = приёмы оплаты (гашение долга), без денег, полученных прямо при продаже.
             const collectedDebt = ops.filter(l => l.type === "payment").reduce((s, l) => s + (l.amount || 0), 0);
             const expensesSum = ops.filter(l => l.type === "expense").reduce((s, l) => s + (l.amount || 0), 0);
+            // Наличные на руках: расходы доставщик оплачивает из собранной налички,
+            // поэтому клик/карта и перечисление сюда не входят.
+            const cashNet = collectedBy.cash - expensesSum;
             const toDebt = sales.reduce((s, l) => s + ((l.total ?? l.amount ?? 0) - (l.received || 0)), 0);
             return (
             <div onClick={() => setReportDeliverer(null)} className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-40 p-4 animate-in fade-in-50">
@@ -2736,7 +2763,11 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                 <div className="p-5 flex flex-col gap-4 overflow-y-auto">
                   {/* Период */}
                   <div className="flex bg-slate-100 rounded-lg p-1 border border-slate-200 self-start">
-                    {([["today", lang === "ru" ? "Сегодня" : "Bugun"], ["all", lang === "ru" ? "За всё время" : "Butun davr"]] as const).map(([id, label]) => (
+                    {([
+                      ["today", lang === "ru" ? "Сегодня" : "Bugun"],
+                      ["yesterday", lang === "ru" ? "Вчера" : "Kecha"],
+                      ["all", lang === "ru" ? "За всё время" : "Butun davr"],
+                    ] as const).map(([id, label]) => (
                       <button key={id} onClick={() => setReportDelivererPeriod(id)}
                         className={`px-4 py-1.5 text-xs font-bold rounded-md transition-all cursor-pointer ${reportDelivererPeriod === id ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>
                         {label}
@@ -2761,6 +2792,11 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                     <div className="bg-slate-50 border border-slate-200 rounded-lg p-3"><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "В долг" : "Nasiya"}</p><p className="text-lg font-mono font-bold text-red-600">{formatSum(toDebt, lang)}</p></div>
                     <div className="bg-rose-50 border border-rose-100 rounded-lg p-3"><p className="text-[10px] uppercase tracking-wider text-rose-400 font-bold">{lang === "ru" ? "Расходы" : "Xarajatlar"}</p><p className="text-lg font-mono font-bold text-rose-600">{formatSum(expensesSum, lang)}</p></div>
                     <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-3"><p className="text-[10px] uppercase tracking-wider text-emerald-500 font-bold">{lang === "ru" ? "Итог: доход − расход" : "Itog: daromad − xarajat"}</p><p className="text-lg font-mono font-bold text-emerald-700">{formatSum(collected - expensesSum, lang)}</p></div>
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                      <p className="text-[10px] uppercase tracking-wider text-amber-600 font-bold">{lang === "ru" ? "Итог наличными" : "Naqd bo'yicha itog"}</p>
+                      <p className="text-lg font-mono font-bold text-amber-700">{formatSum(cashNet, lang)}</p>
+                      <p className="text-[10px] text-slate-500 mt-1">{lang === "ru" ? "Наличные − расходы" : "Naqd − xarajatlar"}</p>
+                    </div>
                   </div>
 
                   {/* Список операций (клик → детали) */}
@@ -2973,13 +3009,16 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                 <form onSubmit={handleAdjustSubmit} className="p-6 flex flex-col gap-4">
                   <div className="flex flex-col gap-1.5">
                     <label className="text-xs font-bold uppercase tracking-wider text-slate-400">{t.selectShop}</label>
-                    <select value={adjustShopId} onChange={(e) => setAdjustShopId(e.target.value)} required
-                      className="w-full px-3.5 py-2 rounded-lg border border-slate-200 text-sm font-medium bg-white focus:outline-none focus:border-amber-400">
-                      <option value="">-- {lang === "ru" ? "Выбрать магазин" : "Do'konni tanlang"} --</option>
-                      {shops.filter(s => !s.isArchived).map(s => (
-                        <option key={s.id} value={s.id}>{s.name} ({lang === "ru" ? "долг" : "qarz"}: {formatSum(s.debt, lang)})</option>
-                      ))}
-                    </select>
+                    <ShopSelect
+                      shops={shops.filter(s => !s.isArchived)}
+                      value={adjustShopId}
+                      onChange={setAdjustShopId}
+                      lang={lang}
+                      required
+                      placeholder={`-- ${lang === "ru" ? "Выбрать магазин" : "Do'konni tanlang"} --`}
+                      optionLabel={(s) => `${s.name} (${lang === "ru" ? "долг" : "qarz"}: ${formatSum(s.debt, lang)})`}
+                      className="w-full px-3.5 py-2 rounded-lg border border-slate-200 text-sm font-medium bg-white focus:outline-none focus:border-amber-400"
+                    />
                   </div>
                   <div className="grid grid-cols-3 gap-3">
                     <div className="flex flex-col gap-1.5">
@@ -3031,17 +3070,16 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                   {/* Shop Select */}
                   <div className="flex flex-col gap-1.5">
                     <label className="text-xs font-bold uppercase tracking-wider text-slate-400">{t.selectShop}</label>
-                    <select 
+                    <ShopSelect
+                      shops={shops.filter(s => !s.isArchived)}
                       value={saleShopId}
-                      onChange={(e) => setSaleShopId(e.target.value)}
-                      className="w-full px-3.5 py-2 rounded-lg border border-slate-200 text-sm font-medium focus:outline-none focus:border-amber-400 bg-white"
+                      onChange={setSaleShopId}
+                      lang={lang}
                       required
-                    >
-                      <option value="">-- Выбрать магазин --</option>
-                      {shops.filter(s => !s.isArchived).map(s => (
-                        <option key={s.id} value={s.id}>{s.name} (долг: {s.debt.toLocaleString()} сум)</option>
-                      ))}
-                    </select>
+                      placeholder="-- Выбрать магазин --"
+                      optionLabel={(s) => `${s.name} (долг: ${s.debt.toLocaleString()} сум)`}
+                      className="w-full px-3.5 py-2 rounded-lg border border-slate-200 text-sm font-medium focus:outline-none focus:border-amber-400 bg-white"
+                    />
                   </div>
 
                   {/* Egg Type */}
@@ -3495,33 +3533,31 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                   {/* Source Shop */}
                   <div className="flex flex-col gap-1.5">
                     <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Магазин-дубликат (будет закрыт) *</label>
-                    <select 
+                    <ShopSelect
+                      shops={shops.filter(s => !s.isArchived)}
                       value={mergeSourceId}
-                      onChange={(e) => setMergeSourceId(e.target.value)}
-                      className="w-full px-3.5 py-2 rounded-lg border border-slate-200 text-sm font-medium focus:outline-none bg-white"
+                      onChange={setMergeSourceId}
+                      lang={lang}
                       required
-                    >
-                      <option value="">-- Выбрать дубликат --</option>
-                      {shops.filter(s => !s.isArchived).map(s => (
-                        <option key={s.id} value={s.id}>{s.name} (долг: {s.debt.toLocaleString()} сум)</option>
-                      ))}
-                    </select>
+                      placeholder="-- Выбрать дубликат --"
+                      optionLabel={(s) => `${s.name} (долг: ${s.debt.toLocaleString()} сум)`}
+                      className="w-full px-3.5 py-2 rounded-lg border border-slate-200 text-sm font-medium focus:outline-none bg-white"
+                    />
                   </div>
 
                   {/* Target Shop */}
                   <div className="flex flex-col gap-1.5">
                     <label className="text-xs font-bold uppercase tracking-wider text-slate-400">Основной магазин (примет долг и историю) *</label>
-                    <select 
+                    <ShopSelect
+                      shops={shops.filter(s => !s.isArchived && s.id !== mergeSourceId)}
                       value={mergeTargetId}
-                      onChange={(e) => setMergeTargetId(e.target.value)}
-                      className="w-full px-3.5 py-2 rounded-lg border border-slate-200 text-sm font-medium focus:outline-none bg-white"
+                      onChange={setMergeTargetId}
+                      lang={lang}
                       required
-                    >
-                      <option value="">-- Выбрать основной магазин --</option>
-                      {shops.filter(s => !s.isArchived && s.id !== mergeSourceId).map(s => (
-                        <option key={s.id} value={s.id}>{s.name} (долг: {s.debt.toLocaleString()} сум)</option>
-                      ))}
-                    </select>
+                      placeholder="-- Выбрать основной магазин --"
+                      optionLabel={(s) => `${s.name} (долг: ${s.debt.toLocaleString()} сум)`}
+                      className="w-full px-3.5 py-2 rounded-lg border border-slate-200 text-sm font-medium focus:outline-none bg-white"
+                    />
                   </div>
 
                   <div className="flex gap-3 mt-4">
