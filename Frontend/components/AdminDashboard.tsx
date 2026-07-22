@@ -844,7 +844,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
     muted: "FF94A3B8",    // slate-400 — подзаголовок
   };
   // Строка считается итоговой (её выделяем), если начинается с этих слов.
-  const TOTAL_RE = /^(UMUMIY|JAMI|KUN ITOGI|ITOG|Начальный долг|Конечный долг|Boshlang'ich qarz|Yakuniy qarz)/i;
+  const TOTAL_RE = /^(UMUMIY|JAMI|KUN ITOGI|ITOG|ОБЩИЙ ИТОГ|Начальный долг|Конечный долг|Boshlang'ich qarz|Yakuniy qarz)/i;
 
   // title — имя листа, displayTitle — заголовок в первой строке (если отличается).
   const downloadExcel = async (filenameBase: string, title: string, headers: string[], rows: (string | number)[][], displayTitle?: string) => {
@@ -1128,7 +1128,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
           } else if (l.type === "expense") {
             const amt = Math.round(l.amount || 0);
             dayExpense += amt;
-            rows.push([ak, dk, "XARAJAT (расход)", "", "", "", "", "", "", "", "", "", "", "", amt,
+            rows.push([ak, dk, lang === "ru" ? "РАСХОД" : "XARAJAT (расход)", "", "", "", "", "", "", "", "", "", "", "", amt,
               `${expenseCategoryLabel(l)}${l.comment ? ` — ${l.comment}` : ""}`]);
           }
         }
@@ -1150,16 +1150,22 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
     }
 
     // Общий итог за весь период (в самом конце отчёта) — в той же колонке JAMI
-    rows.push(["UMUMIY (общий итог)", "", "NAXT (весь нал)", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", grandCash]);
-    rows.push(["UMUMIY (общий итог)", "", "DAROMAD (весь доход)", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", grandIncome]);
-    rows.push(["UMUMIY (общий итог)", "", "RASXOD (все расходы)", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", grandExpense]);
-    rows.push(["UMUMIY (общий итог)", "", "ITOG: DAROMAD − RASXOD", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", grandIncome - grandExpense]);
+    const ru = lang === "ru";
+    const umumiy = ru ? "ОБЩИЙ ИТОГ" : "UMUMIY (общий итог)";
+    rows.push([umumiy, "", ru ? "Всего наличными" : "NAXT (весь нал)", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", grandCash]);
+    rows.push([umumiy, "", ru ? "Всего доход" : "DAROMAD (весь доход)", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", grandIncome]);
+    rows.push([umumiy, "", ru ? "Всего расходы" : "RASXOD (все расходы)", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", grandExpense]);
+    rows.push([umumiy, "", ru ? "Итог: доход − расход" : "ITOG: DAROMAD − RASXOD", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", grandIncome - grandExpense]);
 
-    downloadExcel("otchet", "Otchet",
-      ["SHAFYOR", "SANA", "DOKON NOMI", "KATEGORIYA", "POCHKA", "DONA", "SINIQ", "NARX", "SUMMA", "NAXT", "QARZ", "KLIK", "PERECHESLENIYA", "ESKIQARZ", "RASXOD", "IZOH",
-       "QARZ NAXT", "QARZ KLIK", "QARZ PERECHESLENIYA", "QOLDIQ QARZ", "JAMI",
-       "JAMI NAXT", "JAMI DAROMAD", "JAMI RASXOD", "KUN ITOGI"],
-      rows, lang === "ru" ? "Основной отчёт" : "Asosiy hisobot");
+    downloadExcel("otchet", ru ? "Основной отчёт" : "Otchet",
+      ru
+        ? ["Доставщик", "Дата", "Магазин", "Категория", "Лотков", "Штук", "Бой", "Цена", "Сумма", "Наличными", "В долг", "Карта", "Перечисление", "Старый долг", "Расход", "Примечание",
+           "Долг: наличными", "Долг: карта", "Долг: перечисление", "Остаток долга", "Итого",
+           "Нал за день", "Доход за день", "Расход за день", "Итог дня"]
+        : ["SHAFYOR", "SANA", "DOKON NOMI", "KATEGORIYA", "POCHKA", "DONA", "SINIQ", "NARX", "SUMMA", "NAXT", "QARZ", "KLIK", "PERECHESLENIYA", "ESKIQARZ", "RASXOD", "IZOH",
+           "QARZ NAXT", "QARZ KLIK", "QARZ PERECHESLENIYA", "QOLDIQ QARZ", "JAMI",
+           "JAMI NAXT", "JAMI DAROMAD", "JAMI RASXOD", "KUN ITOGI"],
+      rows);
   };
 
   // 3. По магазину (акт сверки)
@@ -2619,8 +2625,8 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                     </div>
                     <button
                       onClick={() => { const el = document.getElementById("reportShopSel") as HTMLSelectElement | null; if (el?.value) reportByShop(el.value); else showToast(lang === "ru" ? "Выберите магазин" : "Do'konni tanlang", "error"); }}
-                      className="px-4 py-2 rounded-lg bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 cursor-pointer flex items-center gap-1.5 justify-center">
-                      <FileSpreadsheet className="w-4 h-4 text-emerald-400" />{lang === "ru" ? "Скачать" : "Yuklab olish"}
+                      className="bg-amber-400 hover:bg-amber-500 text-slate-900 px-4 py-2 rounded-lg font-bold text-xs shadow-sm hover:shadow active:scale-95 transition-all flex items-center gap-1.5 justify-center cursor-pointer border border-amber-300">
+                      <FileSpreadsheet className="w-4 h-4 shrink-0" />{lang === "ru" ? "Скачать" : "Yuklab olish"}
                     </button>
                   </div>
 
