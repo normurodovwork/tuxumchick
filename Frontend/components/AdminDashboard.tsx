@@ -2776,20 +2776,11 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                     ))}
                   </div>
 
-                  {/* Сводка */}
+                  {/* Сводка: простые метрики — компактная сетка (без «Собрано»,
+                      у которой есть разбивка по способам оплаты и она заметно выше остальных). */}
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                     <div className="bg-slate-50 border border-slate-200 rounded-lg p-3"><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "Продаж" : "Sotuvlar"}</p><p className="text-lg font-mono font-bold text-slate-900">{sales.length}</p></div>
                     <div className="bg-slate-50 border border-slate-200 rounded-lg p-3"><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "Продано" : "Sotilgan"}</p><p className="text-lg font-mono font-bold text-slate-900">{formatSum(sold, lang)}</p></div>
-                    <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
-                      <p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "Собрано" : "Yig'ilgan"}</p>
-                      <p className="text-lg font-mono font-bold text-emerald-600">{formatSum(collected, lang)}</p>
-                      <div className="mt-2 pt-2 border-t border-slate-200 flex flex-col gap-0.5">
-                        <div className="flex justify-between items-baseline gap-2"><span className="text-[10px] text-slate-500 font-semibold">{t.cash}</span><span className="text-[11px] font-mono font-bold text-slate-700">{formatSum(collectedBy.cash, lang)}</span></div>
-                        <div className="flex justify-between items-baseline gap-2"><span className="text-[10px] text-slate-500 font-semibold">{t.card}</span><span className="text-[11px] font-mono font-bold text-slate-700">{formatSum(collectedBy.card, lang)}</span></div>
-                        <div className="flex justify-between items-baseline gap-2"><span className="text-[10px] text-slate-500 font-semibold">{t.transfer}</span><span className="text-[11px] font-mono font-bold text-slate-700">{formatSum(collectedBy.transfer, lang)}</span></div>
-                        <div className="flex justify-between items-baseline gap-2 mt-1 pt-1.5 border-t border-dashed border-slate-200"><span className="text-[10px] text-slate-500 font-semibold">{lang === "ru" ? "Собрано долгов" : "Qarzdan yig'ilgan"}</span><span className="text-[11px] font-mono font-bold text-emerald-600">{formatSum(collectedDebt, lang)}</span></div>
-                      </div>
-                    </div>
                     <div className="bg-slate-50 border border-slate-200 rounded-lg p-3"><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "В долг" : "Nasiya"}</p><p className="text-lg font-mono font-bold text-red-600">{formatSum(toDebt, lang)}</p></div>
                     <div className="bg-rose-50 border border-rose-100 rounded-lg p-3"><p className="text-[10px] uppercase tracking-wider text-rose-400 font-bold">{lang === "ru" ? "Расходы" : "Xarajatlar"}</p><p className="text-lg font-mono font-bold text-rose-600">{formatSum(expensesSum, lang)}</p></div>
                     <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-3"><p className="text-[10px] uppercase tracking-wider text-emerald-500 font-bold">{lang === "ru" ? "Итог: доход − расход" : "Itog: daromad − xarajat"}</p><p className="text-lg font-mono font-bold text-emerald-700">{formatSum(collected - expensesSum, lang)}</p></div>
@@ -2797,6 +2788,18 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                       <p className="text-[10px] uppercase tracking-wider text-amber-600 font-bold">{lang === "ru" ? "Итог наличными" : "Naqd bo'yicha itog"}</p>
                       <p className="text-lg font-mono font-bold text-amber-700">{formatSum(cashNet, lang)}</p>
                       <p className="text-[10px] text-slate-500 mt-1">{lang === "ru" ? "Наличные − расходы" : "Naqd − xarajatlar"}</p>
+                    </div>
+                  </div>
+
+                  {/* Собрано — отдельно, с разбивкой по способам оплаты */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "Собрано" : "Yig'ilgan"}</p>
+                    <p className="text-lg font-mono font-bold text-emerald-600">{formatSum(collected, lang)}</p>
+                    <div className="mt-2 pt-2 border-t border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-0.5">
+                      <div className="flex justify-between items-baseline gap-2"><span className="text-[10px] text-slate-500 font-semibold">{t.cash}</span><span className="text-[11px] font-mono font-bold text-slate-700">{formatSum(collectedBy.cash, lang)}</span></div>
+                      <div className="flex justify-between items-baseline gap-2"><span className="text-[10px] text-slate-500 font-semibold">{t.card}</span><span className="text-[11px] font-mono font-bold text-slate-700">{formatSum(collectedBy.card, lang)}</span></div>
+                      <div className="flex justify-between items-baseline gap-2"><span className="text-[10px] text-slate-500 font-semibold">{t.transfer}</span><span className="text-[11px] font-mono font-bold text-slate-700">{formatSum(collectedBy.transfer, lang)}</span></div>
+                      <div className="flex justify-between items-baseline gap-2"><span className="text-[10px] text-slate-500 font-semibold">{lang === "ru" ? "Собрано долгов" : "Qarzdan yig'ilgan"}</span><span className="text-[11px] font-mono font-bold text-emerald-600">{formatSum(collectedDebt, lang)}</span></div>
                     </div>
                   </div>
 
