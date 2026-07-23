@@ -911,7 +911,8 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
         }
       });
 
-      ws.autoFilter = { from: { row: HDR, column: 1 }, to: { row: HDR, column: lastCol } };
+      const lastDataRow = HDR + rows.length;
+      ws.autoFilter = { from: { row: HDR, column: 1 }, to: { row: lastDataRow, column: lastCol } };
       ws.columns.forEach((col: any, i: number) => {
         const maxLen = Math.max(String(headers[i] ?? "").length, ...rows.map(r => String(r[i] ?? "").length));
         col.width = Math.min(38, Math.max(9, maxLen + 2));

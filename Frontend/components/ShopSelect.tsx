@@ -21,9 +21,8 @@ interface ShopSelectProps<T extends ShopLike> {
 }
 
 // Магазинов в базе несколько десятков, и найти нужный в длинном выпадающем
-// списке тяжело. Поэтому над select'ом показываем поле поиска, которое
-// фильтрует опции по названию. Для коротких списков поиск не нужен.
-const SEARCH_THRESHOLD = 8;
+// списке тяжело. Поэтому над select'ом всегда показываем поле поиска,
+// которое фильтрует опции по названию.
 
 export default function ShopSelect<T extends ShopLike>({
   shops,
@@ -52,31 +51,27 @@ export default function ShopSelect<T extends ShopLike>({
     return selected ? [selected, ...matched] : matched;
   }, [matched, shops, value, q]);
 
-  const showSearch = shops.length >= SEARCH_THRESHOLD;
-
   return (
     <div className="flex flex-col gap-1.5">
-      {showSearch && (
-        <div className="relative">
-          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={lang === "ru" ? "Поиск магазина..." : "Do'kon qidirish..."}
-            className="w-full pl-8 pr-7 py-1.5 rounded-lg border border-slate-200 text-xs font-medium bg-white focus:outline-none focus:border-amber-400"
-          />
-          {query && (
-            <button
-              type="button"
-              onClick={() => setQuery("")}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
-      )}
+      <div className="relative">
+        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={lang === "ru" ? "Поиск магазина..." : "Do'kon qidirish..."}
+          className="w-full pl-8 pr-7 py-1.5 rounded-lg border border-slate-200 text-xs font-medium bg-white focus:outline-none focus:border-amber-400"
+        />
+        {query && (
+          <button
+            type="button"
+            onClick={() => setQuery("")}
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
       <select
         id={id}
         value={value}
@@ -91,7 +86,7 @@ export default function ShopSelect<T extends ShopLike>({
           </option>
         ))}
       </select>
-      {showSearch && q && (
+      {q && (
         <p className="text-[10px] text-slate-400">
           {matched.length > 0
             ? (lang === "ru" ? `Найдено: ${matched.length}` : `Topildi: ${matched.length}`)
