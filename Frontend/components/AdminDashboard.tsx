@@ -914,7 +914,13 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
       const lastDataRow = HDR + rows.length;
       ws.autoFilter = { from: { row: HDR, column: 1 }, to: { row: lastDataRow, column: lastCol } };
       ws.columns.forEach((col: any, i: number) => {
-        const maxLen = Math.max(String(headers[i] ?? "").length, ...rows.map(r => String(r[i] ?? "").length));
+        // Без spread: на длинном отчёте Math.max(...тысячи аргументов) роняет стек
+        // и вся выгрузка падает в catch с общей ошибкой.
+        let maxLen = String(headers[i] ?? "").length;
+        for (const r of rows) {
+          const len = String(r[i] ?? "").length;
+          if (len > maxLen) maxLen = len;
+        }
         col.width = Math.min(38, Math.max(9, maxLen + 2));
       });
 
@@ -927,6 +933,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
       URL.revokeObjectURL(url);
       showToast(lang === "ru" ? "Отчёт выгружен в Excel" : "Hisobot Excelга yuklandi");
     } catch (e) {
+      console.error("Excel export failed", e);
       showToast(lang === "ru" ? "Ошибка выгрузки в Excel" : "Excelга yuklashda xatolik", "error");
     }
   };
@@ -1021,7 +1028,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
       return true;
     };
     const logs = activityLogs
-      .filter(l => !l.isCancelled && inRange(l) && (l.type === "sale" || l.type === "payment" || l.type === "return" || l.type === "expense"))
+      .filter(l => !l.isCancelled && inRange(l) && (l.type === "sale" || l.type === "payment" || l.type === "return" || l.type === "expense" || l.type === "adjustment"))
       .sort((a, b) => new Date(a.operationDate || a.timestamp).getTime() - new Date(b.operationDate || b.timestamp).getTime());
 
     const dateStr = (l: any) => new Date(l.operationDate || l.timestamp).toLocaleDateString("ru-RU");
@@ -1042,11 +1049,15 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
       days[dk].agents[ak].push(l);
     }
 
-    // Остаток долга магазина после каждой операции.
-    // Формула повторяет backend (catalog/models.py, current_debt):
-    //   долг = openingDebt + Σ(продажа.итого − получено) − Σ(оплата) + Σ(корректировка).
+    // Долг магазина ДО и ПОСЛЕ каждой операции.
+    // Дельту берём из общей ledgerDelta — той же, что считает долг в интерфейсе
+    // и в backend (catalog/models.py, current_debt):
+    //   долг = openingDebt + Σ(продажа.итого − получено) − Σ(оплата) + Σ(корректировка ±).
+    // ВАЖНО: у корректировки знак лежит в adjustmentAmount, а в amount — модуль
+    // (api/bridge.py: "amount": abs(...)). Раньше здесь брался amount, поэтому
+    // корректировка «минус» увеличивала долг вместо уменьшения.
     // Идём по ВСЕМ операциям магазина, а не только за период отчёта, иначе остаток
-    // на первой строке периода будет неверным. Возвраты долг не меняют.
+    // на первой строке периода будет неверным. Возвраты долг не меняют (delta = 0).
     const debtAfter: Record<string, number> = {};
     {
       const running: Record<string, number> = {};
@@ -1059,16 +1070,16 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
           const sh = shops.find(s => s.id === l.shopId);
           running[sid] = sh ? (sh.openingDebt || 0) : 0;
         }
-        if (l.type === "sale") running[sid] += (l.total || 0) - (l.received || 0);
-        else if (l.type === "payment") running[sid] -= (l.amount || 0);
-        else if (l.type === "adjustment") running[sid] += (l.amount || 0);
+        running[sid] += ledgerDelta(l);
         debtAfter[l.id] = Math.round(running[sid]);
       }
     }
 
     const rows: (string | number)[][] = [];
     const BLANK = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""];
-    let grandCash = 0, grandIncome = 0, grandExpense = 0;
+    // TOT — первая колонка блока итогов (после «QOLDIQ QARZ», индекс 18).
+    const TOT = 19;
+    let grandCash = 0, grandCard = 0, grandTransfer = 0, grandIncome = 0, grandExpense = 0;
 
     for (const dk of dayKeys) {
       for (const ak of days[dk].agentKeys) {
@@ -1076,8 +1087,6 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
         const blockStart = rows.length;
 
         for (const l of days[dk].agents[ak]) {
-          const shop = shops.find(s => s.id === l.shopId);
-          const eski = shop ? Math.round(shop.openingDebt || 0) : "";
           const dokon = l.shopName || shopNameById(l.shopId);
 
           if (l.type === "sale") {
@@ -1092,7 +1101,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
             const items = Array.isArray(l.items) ? l.items : [];
             if (items.length === 0) {
               const pc = pay(l.paymentType, rec);
-              rows.push([ak, dk, dokon, "", "", "", "", "", Math.round(l.total || 0), pc.naxt, Math.round((l.total || 0) - (l.received || 0)), pc.klik, pc.perech, eski, "", "", "", "", "", qoldiq]);
+              rows.push([ak, dk, dokon, "", "", "", "", "", Math.round(l.total || 0), pc.naxt, Math.round((l.total || 0) - (l.received || 0)), pc.klik, pc.perech, "", "", "", "", "", qoldiq]);
             }
             items.forEach((it: any, idx: number) => {
               const trays = it.trays || 0;
@@ -1112,7 +1121,6 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                 first ? Math.round((l.total || 0) - (l.received || 0)) : "", // QARZ
                 pc.klik,                                            // KLIK
                 pc.perech,                                          // PERECHESLENIYA
-                first ? eski : "",                                 // ESKIQARZ
                 "",                                               // RASXOD
                 "",                                               // IZOH
                 "",                                               // QARZ NAXT
@@ -1130,51 +1138,73 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
             // Погашение долга магазина идёт в отдельные колонки QARZ NAXT / KLIK /
             // PERECHESLENIYA, чтобы не смешиваться с деньгами, полученными при продаже.
             const pc = pay(l.paymentType, amt);
-            rows.push([ak, dk, dokon, "", "", "", "", "", "", "", "", "", "", eski, "", l.comment || "",
+            rows.push([ak, dk, dokon, "", "", "", "", "", "", "", "", "", "", "", l.comment || "",
               pc.naxt, pc.klik, pc.perech, debtAfter[l.id] ?? ""]);
           } else if (l.type === "return") {
-            rows.push([ak, dk, dokon, lang === "ru" ? l.eggNameRu : (l.eggNameUz || l.eggNameRu), "", "", l.qtyPieces || 0, "", "", "", "", "", "", eski, "", l.comment || "",
+            rows.push([ak, dk, dokon, lang === "ru" ? l.eggNameRu : (l.eggNameUz || l.eggNameRu), "", "", l.qtyPieces || 0, "", "", "", "", "", "", "", l.comment || "",
               "", "", "", debtAfter[l.id] ?? ""]);
           } else if (l.type === "expense") {
             const amt = Math.round(l.amount || 0);
             dayExpense += amt;
-            rows.push([ak, dk, lang === "ru" ? "РАСХОД" : "XARAJAT (расход)", "", "", "", "", "", "", "", "", "", "", "", amt,
+            rows.push([ak, dk, lang === "ru" ? "РАСХОД" : "XARAJAT (расход)", "", "", "", "", "", "", "", "", "", "", amt,
               `${expenseCategoryLabel(l)}${l.comment ? ` — ${l.comment}` : ""}`]);
+          } else if (l.type === "adjustment") {
+            // Корректировка долга — не деньги: в нал/доход/расход не попадает,
+            // но остаток долга меняет. Без этой строки QOLDIQ QARZ «прыгал»
+            // без видимой причины. Знак — из ledgerDelta (в amount лежит модуль).
+            const delta = Math.round(ledgerDelta(l));
+            const label = lang === "ru" ? "Корректировка долга" : "Qarz tuzatish";
+            rows.push([ak, dk, dokon, "", "", "", "", "", "", "", delta, "", "", "",
+              `${label}${l.reason ? ` — ${l.reason}` : ""}`, "", "", "", debtAfter[l.id] ?? ""]);
           }
         }
 
-        grandCash += dayCash; grandIncome += dayIncome; grandExpense += dayExpense;
+        grandCash += dayCash; grandCard += dayCard; grandTransfer += dayTransfer;
+        grandIncome += dayIncome; grandExpense += dayExpense;
 
-        // Итоги агента за день уходят вбок — в колонки JAMI NAXT / JAMI DAROMAD /
-        // JAMI RASXOD / KUN ITOGI на последней строке блока, а не отдельными строками.
+        // Итоги доставщика за день уходят вбок — в колонки блока итогов на последней
+        // строке блока, а не отдельными строками. Каждая колонка итогов суммируется
+        // по вертикали ровно в свою строку «ОБЩИЙ ИТОГ» в конце отчёта.
         const lastRow = rows[rows.length - 1];
         if (rows.length > blockStart && lastRow) {
-          while (lastRow.length < 21) lastRow.push("");
-          lastRow[21] = dayCash;
-          lastRow[22] = dayIncome;
-          lastRow[23] = dayExpense;
-          lastRow[24] = dayIncome - dayExpense;
+          while (lastRow.length < TOT) lastRow.push("");
+          lastRow[TOT] = dayCash;
+          lastRow[TOT + 1] = dayCard;
+          lastRow[TOT + 2] = dayTransfer;
+          lastRow[TOT + 3] = dayIncome;      // = нал + карта + перечисление
+          lastRow[TOT + 4] = dayExpense;
+          lastRow[TOT + 5] = dayIncome - dayExpense;
         }
         rows.push([...BLANK]);
       }
     }
 
-    // Общий итог за весь период (в самом конце отчёта) — в той же колонке JAMI
+    // Общий итог за весь период — каждое значение в СВОЮ колонку итогов, чтобы
+    // колонка сходилась при обычном суммировании в Excel.
     const ru = lang === "ru";
     const umumiy = ru ? "ОБЩИЙ ИТОГ" : "UMUMIY (общий итог)";
-    rows.push([umumiy, "", ru ? "Всего наличными" : "NAXT (весь нал)", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", grandCash]);
-    rows.push([umumiy, "", ru ? "Всего доход" : "DAROMAD (весь доход)", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", grandIncome]);
-    rows.push([umumiy, "", ru ? "Всего расходы" : "RASXOD (все расходы)", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", grandExpense]);
-    rows.push([umumiy, "", ru ? "Итог: доход − расход" : "ITOG: DAROMAD − RASXOD", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", grandIncome - grandExpense]);
+    const grandRow = (label: string, offset: number, value: number): (string | number)[] => {
+      const r: (string | number)[] = new Array(TOT + 6).fill("");
+      r[0] = umumiy;
+      r[2] = label;
+      r[TOT + offset] = value;
+      return r;
+    };
+    rows.push(grandRow(ru ? "Всего наличными" : "NAXT (весь нал)", 0, grandCash));
+    rows.push(grandRow(ru ? "Всего картой" : "KLIK (всего)", 1, grandCard));
+    rows.push(grandRow(ru ? "Всего перечислением" : "PERECHESLENIYA (всего)", 2, grandTransfer));
+    rows.push(grandRow(ru ? "Всего доход" : "DAROMAD (весь доход)", 3, grandIncome));
+    rows.push(grandRow(ru ? "Всего расходы" : "RASXOD (все расходы)", 4, grandExpense));
+    rows.push(grandRow(ru ? "Итог: доход − расход" : "ITOG: DAROMAD − RASXOD", 5, grandIncome - grandExpense));
 
     downloadExcel("otchet", ru ? "Основной отчёт" : "Otchet",
       ru
-        ? ["Доставщик", "Дата", "Магазин", "Категория", "Лотков", "Штук", "Бой", "Цена", "Сумма", "Наличными", "В долг", "Карта", "Перечисление", "Старый долг", "Расход", "Примечание",
-           "Долг: наличными", "Долг: карта", "Долг: перечисление", "Остаток долга", "Итого",
-           "Нал за день", "Доход за день", "Расход за день", "Итог дня"]
-        : ["SHAFYOR", "SANA", "DOKON NOMI", "KATEGORIYA", "POCHKA", "DONA", "SINIQ", "NARX", "SUMMA", "NAXT", "QARZ", "KLIK", "PERECHESLENIYA", "ESKIQARZ", "RASXOD", "IZOH",
-           "QARZ NAXT", "QARZ KLIK", "QARZ PERECHESLENIYA", "QOLDIQ QARZ", "JAMI",
-           "JAMI NAXT", "JAMI DAROMAD", "JAMI RASXOD", "KUN ITOGI"],
+        ? ["Доставщик", "Дата", "Магазин", "Категория", "Лотков", "Штук", "Бой", "Цена", "Сумма", "Наличными", "В долг", "Карта", "Перечисление", "Расход", "Примечание",
+           "Долг: наличными", "Долг: карта", "Долг: перечисление", "Остаток долга",
+           "Итог: нал", "Итог: карта", "Итог: перечисление", "Итог: доход", "Итог: расход", "Итог: доход − расход"]
+        : ["SHAFYOR", "SANA", "DOKON NOMI", "KATEGORIYA", "POCHKA", "DONA", "SINIQ", "NARX", "SUMMA", "NAXT", "QARZ", "KLIK", "PERECHESLENIYA", "RASXOD", "IZOH",
+           "QARZ NAXT", "QARZ KLIK", "QARZ PERECHESLENIYA", "QOLDIQ QARZ",
+           "JAMI NAXT", "JAMI KLIK", "JAMI PERECHESLENIYA", "JAMI DAROMAD", "JAMI RASXOD", "KUN ITOGI"],
       rows);
   };
 
@@ -1198,7 +1228,13 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
     // Деньги ложатся в колонку своего способа оплаты (наличка / карта / перечисление).
     const payCells = (pt: string, amt: number): (string | number)[] =>
       [pt === "card" ? "" : pt === "transfer" ? "" : amt, pt === "card" ? amt : "", pt === "transfer" ? amt : ""];
-    const debtCell = (l: any) => `${Math.round(running)}${l.isCancelled ? " (аннул.)" : ""}`;
+    // «Долг после» — именно число, а не строка: иначе Excel хранит его как текст,
+    // не применяет денежный формат и не даёт суммировать/сравнивать колонку.
+    const debtCell = () => Math.round(running);
+    // Аннулированная операция долг не меняет, поэтому её суммы в денежные колонки
+    // не попадают (иначе «Приход» не сходится с изменением долга) — только пометка.
+    const cancelledRow = (date: string, l: any): (string | number)[] =>
+      [date, `${opTypeLabel(l)} — ${lang === "ru" ? "АННУЛИРОВАНО" : "BEKOR QILINGAN"}`, "", "", "", "", debtCell()];
 
     const rows: (string | number)[][] = [[lang === "ru" ? "Начальный долг" : "Boshlang'ich qarz", "", "", "", "", "", Math.round(opening)]];
     for (const l of inPeriod) {
@@ -1206,26 +1242,29 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
       if (end && d > end) continue;
       const date = d.toLocaleDateString();
 
-      if (l.type === "sale") {
+      if (l.isCancelled) {
+        rows.push(cancelledRow(date, l));
+      } else if (l.type === "sale") {
         // Продажа и полученные по ней деньги — двумя отдельными строками:
         // сначала отгрузка (долг растёт), затем оплата (долг гасится).
         const total = Math.round(l.total ?? l.amount ?? 0);
         const rec = Math.round(l.received ?? 0);
-        if (!l.isCancelled) running += total;
-        rows.push([date, opTypeLabel(l), total, "", "", "", debtCell(l)]);
+        running += total;
+        rows.push([date, opTypeLabel(l), total, "", "", "", debtCell()]);
         if (rec > 0) {
-          if (!l.isCancelled) running -= rec;
-          rows.push([date, lang === "ru" ? "Оплата" : "To'lov", "", ...payCells(l.paymentType, rec), debtCell(l)]);
+          running -= rec;
+          rows.push([date, lang === "ru" ? "Оплата" : "To'lov", "", ...payCells(l.paymentType, rec), debtCell()]);
         }
       } else if (l.type === "payment") {
         const amt = Math.round(l.amount || 0);
-        if (!l.isCancelled) running -= amt;
-        rows.push([date, opTypeLabel(l), "", ...payCells(l.paymentType, amt), debtCell(l)]);
+        running -= amt;
+        rows.push([date, opTypeLabel(l), "", ...payCells(l.paymentType, amt), debtCell()]);
       } else {
         // Корректировка — не деньги, а правка долга: показываем со знаком в «Приход».
+        // Знак берём из ledgerDelta (в поле amount у корректировки лежит модуль).
         const delta = Math.round(ledgerDelta(l));
         running += delta;
-        rows.push([date, opTypeLabel(l), delta, "", "", "", debtCell(l)]);
+        rows.push([date, opTypeLabel(l), delta, "", "", "", debtCell()]);
       }
     }
     rows.push([lang === "ru" ? "Конечный долг" : "Yakuniy qarz", "", "", "", "", "", Math.round(running)]);
@@ -2851,9 +2890,10 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
             );
           })()}
 
-          {/* Modal: детали операции (П4 — клик по операции) */}
+          {/* Modal: детали операции (П4 — клик по операции).
+              z-[60] — выше карточки магазина (z-50), из которой её тоже открывают. */}
           {viewOp && (
-            <div onClick={() => setViewOp(null)} className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in-50">
+            <div onClick={() => setViewOp(null)} className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[60] p-4 animate-in fade-in-50">
               <div onClick={(e) => e.stopPropagation()} className="bg-white rounded-xl border border-slate-200 shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 flex flex-col max-h-[90vh]">
                 <div className="bg-slate-900 text-white px-5 py-4 flex justify-between items-center">
                   <div className="flex items-center gap-2">
@@ -2890,9 +2930,11 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                           <div className="col-span-2"><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "Комментарий" : "Izoh"}</p><p className="font-medium text-slate-700">{viewOp.comment}</p></div>
                         )}
                       </>
-                    ) : (
+                    ) : (viewOp.type === "sale" || viewOp.type === "payment") ? (
                       <div><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{t.paymentType}</p><p className="font-semibold text-slate-800">{viewOp.paymentType === "cash" ? t.cash : viewOp.paymentType === "card" ? t.card : viewOp.paymentType === "transfer" ? t.transfer : viewOp.paymentType === "debt" ? (lang === "ru" ? "В долг" : "Nasiya") : "—"}</p></div>
-                    )}
+                    ) : viewOp.type === "adjustment" && viewOp.reason ? (
+                      <div><p className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">{lang === "ru" ? "Причина" : "Sabab"}</p><p className="font-semibold text-slate-800">{viewOp.reason}</p></div>
+                    ) : null}
                   </div>
 
                   {/* Позиции продажи (что/сколько/по какой цене) */}
@@ -2932,6 +2974,15 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                     ) : viewOp.type === "return" ? (
                       <div className="bg-orange-50 border border-orange-100 text-orange-800 rounded-lg px-3 py-2 text-[11px] font-semibold">
                         {lang === "ru" ? "Возмещение той же категорией по штукам. На долг и деньги не влияет." : "Shu kategoriya bilan donada o'rnini bosish. Qarz va pulga ta'sir qilmaydi."}
+                      </div>
+                    ) : viewOp.type === "adjustment" ? (
+                      // У корректировки знак лежит в adjustmentAmount, в amount — модуль,
+                      // поэтому «минус» (списание) иначе выглядел бы как начисление.
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">{lang === "ru" ? "Изменение долга" : "Qarz o'zgarishi"}</span>
+                        <span className={`font-mono font-bold ${(viewOp.adjustmentAmount ?? 0) < 0 ? "text-emerald-600" : "text-red-600"}`}>
+                          {(viewOp.adjustmentAmount ?? 0) > 0 ? "+" : ""}{formatSum(viewOp.adjustmentAmount ?? 0, lang)}
+                        </span>
                       </div>
                     ) : (
                       <div className="flex justify-between"><span className="text-slate-500">{lang === "ru" ? "Сумма" : "Summa"}</span><span className="font-mono font-bold text-slate-900">{formatSum(viewOp.amount ?? 0, lang)}</span></div>
@@ -3620,7 +3671,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
 
             return (
               <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in-50">
-                <div className="bg-white w-full max-w-md rounded-2xl border border-slate-200 overflow-hidden shadow-2xl animate-in zoom-in-95 flex flex-col max-h-[90vh]">
+                <div className="bg-white w-full max-w-2xl rounded-2xl border border-slate-200 overflow-hidden shadow-2xl animate-in zoom-in-95 flex flex-col max-h-[90vh]">
                   {/* Modal Header */}
                   <div className="bg-slate-900 p-4 text-white flex justify-between items-center border-b border-slate-800 shrink-0">
                     <div className="flex items-center gap-2">
@@ -3742,60 +3793,68 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                         )}
                       </div>
 
-                      <div className="divide-y divide-slate-100 border border-slate-150 rounded-xl max-h-[180px] overflow-y-auto bg-white">
-                        {filteredHistory.length === 0 ? (
-                          <div className="p-6 text-center text-slate-400 text-xs font-medium">
-                            История пуста.
-                          </div>
-                        ) : (
-                          filteredHistory.map((log) => {
-                            const date = log.timestamp ? new Date(log.timestamp).toLocaleDateString("ru-RU", { month: "short", day: "numeric" }) : "";
-                            const time = log.timestamp ? new Date(log.timestamp).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }) : "";
-
-                            return (
-                              <div key={log.id} className={`p-3 text-xs flex justify-between items-center ${log.isCancelled ? "opacity-50 bg-slate-50" : ""}`}>
-                                <div>
-                                  <div className="flex items-center gap-1.5 flex-wrap">
-                                    <span className={`px-1.5 py-0.2 text-[8px] font-extrabold uppercase rounded-md ${
-                                      log.isCancelled
-                                        ? "bg-slate-200 text-slate-600"
-                                        : log.type === "return"
-                                          ? "bg-orange-100 text-orange-800"
-                                          : log.type === "payment" && !log.qty
-                                            ? "bg-emerald-100 text-emerald-800"
-                                            : "bg-amber-100 text-amber-800"
-                                    }`}>
-                                      {log.isCancelled
-                                        ? "Отмена"
-                                        : log.type === "return"
-                                          ? "Возврат"
-                                          : log.type === "payment" && !log.qty
-                                            ? "Оплата"
-                                            : "Продажа"}
-                                    </span>
-                                    <span className="text-[9px] text-slate-400 font-mono">
-                                      {date} {time}
-                                    </span>
-                                    {log.operator && (
-                                      <span className="text-[9px] bg-slate-100 text-slate-500 px-1 rounded">
-                                        {log.operator}
+                      {/* Список операций — та же таблица, что в отчёте доставщика,
+                          только вместо магазина показываем доставщика. Клик по строке
+                          открывает подробную карточку операции (viewOp). */}
+                      <div className="border border-slate-200 rounded-lg overflow-hidden">
+                        <div className="overflow-x-auto max-h-[45vh] overflow-y-auto">
+                          <table className="w-full text-left border-collapse text-sm">
+                            <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500 font-bold sticky top-0">
+                              <tr>
+                                <th className="px-4 py-2.5">{lang === "ru" ? "Дата / время" : "Sana / vaqt"}</th>
+                                <th className="px-4 py-2.5">{lang === "ru" ? "Доставщик" : "Yetkazuvchi"}</th>
+                                <th className="px-4 py-2.5 text-center">{lang === "ru" ? "Тип" : "Turi"}</th>
+                                <th className="px-4 py-2.5 text-right">{lang === "ru" ? "Сумма" : "Summa"}</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {filteredHistory.map((log) => {
+                                // Продажа: зелёная — оплачена полностью, жёлтая — магазин остался должен.
+                                const saleLeft = (log.total ?? log.amount ?? 0) - (log.received || 0);
+                                const salePaidFull = log.type === "sale" && saleLeft <= 0;
+                                const badgeClass = log.isCancelled ? "bg-slate-200 text-slate-500"
+                                  : log.type === "payment" ? "bg-green-100 text-green-800"
+                                    : log.type === "return" ? "bg-orange-100 text-orange-800"
+                                      : log.type === "adjustment" ? "bg-violet-100 text-violet-800"
+                                        : log.type === "audit" ? "bg-slate-100 text-slate-600"
+                                          : salePaidFull ? "bg-emerald-100 text-emerald-800"
+                                            : "bg-amber-100 text-amber-800";
+                                const typeLabel = log.type === "payment" ? (lang === "ru" ? "Оплата" : "To'lov")
+                                  : log.type === "return" ? (lang === "ru" ? "Возврат" : "Qaytarish")
+                                    : log.type === "adjustment" ? (lang === "ru" ? "Корректировка" : "Tuzatish")
+                                      : log.type === "audit" ? (lang === "ru" ? "Журнал" : "Jurnal")
+                                        : (lang === "ru" ? "Продажа" : "Sotuv");
+                                return (
+                                  <tr key={log.id} onClick={() => setViewOp(log)}
+                                    className={`hover:bg-amber-50/40 cursor-pointer transition-colors ${log.isCancelled ? "opacity-50" : ""}`}>
+                                    <td className="px-4 py-2.5 font-mono text-[11px] text-slate-500">{log.timestamp ? new Date(log.timestamp).toLocaleString() : "—"}</td>
+                                    <td className="px-4 py-2.5 font-medium text-slate-800">{log.operator || "—"}</td>
+                                    <td className="px-4 py-2.5 text-center">
+                                      <span
+                                        title={log.type !== "sale" || log.isCancelled ? undefined : salePaidFull
+                                          ? (lang === "ru" ? "Оплачено полностью" : "To'liq to'langan")
+                                          : `${lang === "ru" ? "Осталось долга" : "Qarz qoldi"}: ${formatSum(saleLeft, lang)}`}
+                                        className={`inline-block px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${badgeClass}`}>
+                                        {log.isCancelled ? (lang === "ru" ? "Аннулировано" : "Bekor") : typeLabel}
                                       </span>
-                                    )}
-                                  </div>
-                                  <p className={`mt-1 font-medium ${log.isCancelled ? "line-through text-slate-400" : "text-slate-700"}`}>
-                                    {log.message}
-                                  </p>
-                                </div>
-                                <div className="text-right shrink-0 ml-2">
-                                  <span className="font-mono font-bold text-slate-800">
-                                    {log.type === "return" ? `${log.qtyPieces ?? 0} шт` : `${log.amount?.toLocaleString()} сум`}
-                                  </span>
-                                </div>
-                              </div>
-                            );
-                          })
-                        )}
+                                    </td>
+                                    <td className={`px-4 py-2.5 text-right font-mono font-bold ${log.isCancelled ? "line-through text-slate-400" : "text-slate-900"}`}>
+                                      {log.type === "return" ? `${log.qtyPieces ?? 0} ${lang === "ru" ? "шт" : "dona"}`
+                                        : log.type === "audit" ? "—"
+                                          : log.type === "adjustment" ? formatSum(log.adjustmentAmount ?? 0, lang)
+                                            : formatSum(log.type === "sale" ? (log.total ?? log.amount ?? 0) : (log.amount ?? 0), lang)}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                              {filteredHistory.length === 0 && (
+                                <tr><td colSpan={4} className="px-4 py-8 text-center text-slate-400 text-xs">{lang === "ru" ? "История пуста." : "Tarix bo'sh."}</td></tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
                       </div>
+                      <p className="text-[10px] text-slate-400">{lang === "ru" ? "Нажмите на операцию, чтобы увидеть детали (что, сколько и по какой цене)." : "Tafsilotlarni ko'rish uchun amaliyotni bosing."}</p>
                     </div>
                   </div>
 
