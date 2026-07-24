@@ -4,17 +4,29 @@
 работать без изменения формы данных при переходе с Firestore на этот API.
 """
 from datetime import timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import APIException, PermissionDenied
 
-from catalog.models import Shop
+from catalog.models import AppSettings, EggType, Shop
 from operations.models import ActivityLog, Adjustment, Expense, Payment, Return, Sale, SaleItem
 
 # Доставщик может исправлять/аннулировать операцию только в течение суток (ТЗ п.5).
 EDIT_WINDOW = timedelta(hours=24)
+
+# Допуск при сверке денежных величин: числа приходят через JSON (float),
+# поэтому точное равенство Decimal здесь неуместно.
+MONEY_EPS = Decimal("0.01")
+
+
+class BusinessRuleError(APIException):
+    """Нарушено бизнес-правило. Отдаёт {"detail": "..."} со статусом 400 —
+    фронтенд показывает detail пользователю (db-service.apiSend)."""
+
+    status_code = 400
+    default_detail = "Операция не прошла проверку."
 
 
 def _is_admin(user) -> bool:
@@ -234,30 +246,121 @@ def _get_shop(data):
     return Shop.objects.filter(id=shop_id).first()
 
 
+def _dec(value, field):
+    try:
+        d = Decimal(str(value if value is not None else 0))
+    except (InvalidOperation, ValueError, TypeError):
+        raise BusinessRuleError(f"Некорректное числовое значение в поле «{field}».")
+    if not d.is_finite():
+        raise BusinessRuleError(f"Некорректное числовое значение в поле «{field}».")
+    return d
+
+
+def _validate_sale(data):
+    """
+    Пересчитывает и сверяет суммы продажи НА СЕРВЕРЕ (ТЗ п.5.4 + анти-махинации п.5).
+
+    Клиенту нельзя доверять ни цену, ни количество лотков, ни итог: без этой
+    проверки доставщик мог отправить продажу с отрицательным или нулевым итогом
+    и тем самым списать долг магазина, минуя интерфейс.
+
+    Возвращает (total, received, items) — уже серверные значения, готовые для
+    Sale/SaleItem. Цена берётся из каталога, лотки — из количества и настроек.
+    """
+    total = _dec(data.get("total", 0), "total")
+    received = _dec(data.get("received", 0), "received")
+    if total < 0:
+        raise BusinessRuleError("Сумма продажи не может быть отрицательной.")
+    if received < 0:
+        raise BusinessRuleError("Полученная сумма не может быть отрицательной.")
+
+    raw_items = data.get("items") or []
+    if not raw_items:
+        # Без позиций итог ничем не подтверждён — такую продажу не принимаем.
+        raise BusinessRuleError("В продаже должна быть хотя бы одна позиция.")
+
+    trays_per_box = Decimal(str(AppSettings.load().trays_per_box or 1))
+    items, line_sum = [], Decimal("0")
+
+    for raw in raw_items:
+        egg = EggType.objects.filter(id=raw.get("eggType")).first()
+        if egg is None:
+            raise BusinessRuleError(f"Неизвестный вид яиц: {raw.get('eggType')}.")
+
+        qty = _dec(raw.get("qty", 0), "qty")
+        if qty <= 0:
+            raise BusinessRuleError(f"Количество по позиции «{egg.name_ru}» должно быть больше нуля.")
+
+        is_box = raw.get("qtyType") == "boxes"
+        trays = qty * trays_per_box if is_box else qty
+        if abs(_dec(raw.get("trays", 0), "trays") - trays) > MONEY_EPS:
+            raise BusinessRuleError(f"Количество лотков по позиции «{egg.name_ru}» не сходится с количеством.")
+
+        price = egg.current_price_per_tray
+        if price is None:
+            raise BusinessRuleError(f"Для «{egg.name_ru}» не задана цена в каталоге.")
+        if abs(_dec(raw.get("pricePerTray", 0), "pricePerTray") - price) > MONEY_EPS:
+            raise BusinessRuleError(
+                f"Цена по позиции «{egg.name_ru}» не совпадает с ценой в каталоге — обновите страницу."
+            )
+
+        line = trays * price
+        if abs(_dec(raw.get("lineTotal", 0), "lineTotal") - line) > MONEY_EPS:
+            raise BusinessRuleError(f"Сумма по позиции «{egg.name_ru}» не равна «лотки × цена».")
+
+        line_sum += line
+        items.append({
+            "egg_type_id": egg.id,
+            "unit": SaleItem.Unit.BOX if is_box else SaleItem.Unit.TRAY,
+            "quantity": qty,
+            "price_per_tray": price,
+            "trays": trays,
+            "line_total": line,
+        })
+
+    if abs(total - line_sum) > MONEY_EPS:
+        raise BusinessRuleError("Итог продажи не сходится с суммой позиций.")
+
+    # Сохраняем именно пересчитанный итог, а не присланный.
+    return line_sum, received, items
+
+
+def _apply_shop_move(obj, data, user):
+    """
+    Перепривязка операции к другому магазину — нужна для «объединения дубликатов»
+    (AdminDashboard: операции исходной точки переезжают на целевую).
+
+    Только администратор: иначе доставщик мог бы перебрасывать чужой долг
+    между точками через API.
+    """
+    if "shopId" not in data:
+        return
+    if not _is_admin(user):
+        raise PermissionDenied("Переносить операцию в другой магазин может только администратор.")
+    shop = Shop.objects.filter(id=data.get("shopId")).first()
+    if shop is None:
+        raise BusinessRuleError("Магазин для переноса операции не найден.")
+    obj.shop = shop
+
+
 def create_operation(user, data):
     op_type = data.get("type")
     shop = _get_shop(data)
 
     # Продажа
     if op_type == "sale" and shop is not None:
+        total, received, items = _validate_sale(data)
         s = Sale.objects.create(
             shop=shop, deliverer=user,
             operation_date=parse_dt(data.get("operationDate")),
-            total=Decimal(str(data.get("total", 0))),
-            received=Decimal(str(data.get("received", 0))),
+            total=total,
+            received=received,
             payment_method=data.get("paymentType") if data.get("paymentType") in ("cash", "card", "transfer") else "cash",
             comment=data.get("comment", "") or "",
             message=data.get("message", "") or "",
         )
-        for it in data.get("items", []):
-            SaleItem.objects.create(
-                sale=s, egg_type_id=it["eggType"],
-                unit=SaleItem.Unit.BOX if it.get("qtyType") == "boxes" else SaleItem.Unit.TRAY,
-                quantity=Decimal(str(it.get("qty", 0))),
-                price_per_tray=Decimal(str(it.get("pricePerTray", 0))),
-                trays=Decimal(str(it.get("trays", 0))),
-                line_total=Decimal(str(it.get("lineTotal", 0))),
-            )
+        for it in items:
+            SaleItem.objects.create(sale=s, **it)
         return sale_to_log(s)
 
     # Приём оплаты
@@ -336,8 +439,12 @@ def update_operation(op_id, data, user):
         if not obj:
             return None
         _guard_deliverer_edit(obj, obj.deliverer, user)
+        _apply_shop_move(obj, data, user)
         if "total" in data:
-            obj.total = Decimal(str(data["total"]))
+            total = _dec(data["total"], "total")
+            if total < 0:
+                raise BusinessRuleError("Сумма продажи не может быть отрицательной.")
+            obj.total = total
         apply_common(obj)
         if data.get("isCancelled"):
             obj.is_cancelled = True
@@ -351,8 +458,12 @@ def update_operation(op_id, data, user):
         if not obj:
             return None
         _guard_deliverer_edit(obj, obj.operator, user)
+        _apply_shop_move(obj, data, user)
         if "amount" in data:
-            obj.amount = Decimal(str(data["amount"]))
+            amount = _dec(data["amount"], "amount")
+            if amount < 0:
+                raise BusinessRuleError("Сумма оплаты не может быть отрицательной.")
+            obj.amount = amount
         apply_common(obj)
         if data.get("isCancelled"):
             obj.is_cancelled = True
@@ -366,6 +477,7 @@ def update_operation(op_id, data, user):
         if not obj:
             return None
         _guard_deliverer_edit(obj, obj.deliverer, user)
+        _apply_shop_move(obj, data, user)
         apply_common(obj)
         if data.get("isCancelled"):
             obj.is_cancelled = True
@@ -380,7 +492,10 @@ def update_operation(op_id, data, user):
             return None
         _guard_deliverer_edit(obj, obj.deliverer, user)
         if "amount" in data:
-            obj.amount = Decimal(str(data["amount"]))
+            amount = _dec(data["amount"], "amount")
+            if amount < 0:
+                raise BusinessRuleError("Сумма расхода не может быть отрицательной.")
+            obj.amount = amount
         apply_common(obj)
         if data.get("isCancelled"):
             obj.is_cancelled = True
@@ -394,6 +509,7 @@ def update_operation(op_id, data, user):
         if not obj:
             return None
         _guard_deliverer_edit(obj, obj.operator, user)
+        _apply_shop_move(obj, data, user)
         apply_common(obj)
         if data.get("isCancelled"):
             obj.is_cancelled = True
@@ -407,6 +523,7 @@ def update_operation(op_id, data, user):
         # Записи журнала действий правит только администратор (целостность аудита).
         if not _is_admin(user):
             raise PermissionDenied("Журнал действий может изменять только администратор.")
+        _apply_shop_move(obj, data, user)
         if "message" in data:
             obj.message = data.get("message") or obj.message
         obj.save()
