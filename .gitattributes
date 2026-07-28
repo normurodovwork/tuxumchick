@@ -1,0 +1,4 @@
+# Нормализация переносов строк. Shell-скрипты ВСЕГДА с LF —
+# иначе CRLF ломает шебанг в Linux-контейнерах (exec: no such file or directory).
+* text=auto
+*.sh text eol=lf
