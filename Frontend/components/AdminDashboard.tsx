@@ -1393,7 +1393,8 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
     let totalAdvance = 0;   // Σ переплат (авансов)
     let salesSum = 0;       // продажи за период (итого)
     let cashCollectedSum = 0; // получено денег: при продажах + приёмы оплаты
-    let givenToDebt = 0;    // отдано в долг за период
+    let givenToDebt = 0;    // отдано в долг за период (сальдо)
+    let debtCollectedSum = 0; // погашено долгов за период (только приёмы оплаты)
     // Раздельный подсчёт по видам оплаты (П1): наличные / клик / перечисление.
     let byCash = 0, byCard = 0, byTransfer = 0;
     const addByType = (pt: string, amt: number) => {
@@ -1421,6 +1422,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
         cashCollectedSum += amt;
         addByType(log.paymentType, amt);
         givenToDebt -= amt;
+        debtCollectedSum += amt;
       } else if (log.type === "adjustment" && typeof log.adjustmentAmount === "number") {
         givenToDebt += log.adjustmentAmount;
       }
@@ -1433,6 +1435,7 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
       cashCollected: cashCollectedSum,
       byCash, byCard, byTransfer,
       givenToDebt,
+      debtCollected: debtCollectedSum,
       activeDeliverersCount: deliverers.filter(d => d.status === "online").length,
       totalDeliverersCount: deliverers.length,
     };
@@ -1806,21 +1809,11 @@ export default function AdminDashboard({ username, onLogout, lang, setLang }: Ad
                         {formatSum(stats.salesToday, lang)}
                       </p>
                     </div>
-                    {/* givenToDebt — сальдо: минус означает, что за период долгов
-                        собрали больше, чем выдали. Показываем это как «Собрано
-                        долгов», а не как отрицательную выдачу в долг. */}
+                    {/* Собрано долгов за период — только приёмы оплаты (гашение
+                        долга), без вычета выданного в долг. */}
                     <p className="text-[10px] text-slate-500 mt-2 font-medium">
-                      {stats.givenToDebt >= 0 ? (
-                        <>
-                          {lang === "ru" ? "Отдано в долг за период:" : "Nasiyaga berilgan:"}{" "}
-                          <span className="text-red-600 font-bold">{formatSum(stats.givenToDebt, lang)}</span>
-                        </>
-                      ) : (
-                        <>
-                          {lang === "ru" ? "Собрано долгов за период:" : "Yig'ilgan qarzlar:"}{" "}
-                          <span className="text-emerald-600 font-bold">{formatSum(-stats.givenToDebt, lang)}</span>
-                        </>
-                      )}
+                      {lang === "ru" ? "Собрано долгов за период:" : "Yig'ilgan qarzlar:"}{" "}
+                      <span className="text-emerald-600 font-bold">{formatSum(stats.debtCollected, lang)}</span>
                     </p>
                   </div>
 

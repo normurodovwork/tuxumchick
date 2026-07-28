@@ -28,3 +28,22 @@ node_modules/
 .idea/
 .vscode/
 *.log
+
+# Временные скрипты и логи деплоя (генерятся агентом, содержат секреты — НЕ коммитить).
+# Постоянные ассеты деплоя лежат в deploy/ и сюда не попадают.
+deploy_*.py
+deploy_*_result.txt
+deploy_now_result.txt
+fix_*.py
+rebuild_*.py
+restart_docker_build.py
+update_server.py
+upload_*.py
+push_file_sftp.py
+*_result.txt
+notify.py
+notify_toast.ps1
+popup.py
+DEPLOY_DONE.txt
+DEPLOY_STATUS.md
+MESSAGE_FROM_CLAUDE.txt
